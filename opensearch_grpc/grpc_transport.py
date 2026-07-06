@@ -51,6 +51,12 @@ class GrpcTransport(Transport):
         self._grpc_port = kwargs.pop("grpc_port", 9400)
         self._grpc_hosts = kwargs.pop("grpc_hosts", None)
 
+        # Read TLS params (don't pop — REST fallback needs them too)
+        self._use_ssl = kwargs.get("use_ssl", False)
+        self._ca_certs = kwargs.get("ca_certs", None)
+        self._client_cert = kwargs.get("client_cert", None)
+        self._client_key = kwargs.get("client_key", None)
+
         # Validate single gRPC host — multiple targets not yet supported
         if self._grpc_hosts and len(self._grpc_hosts) > 1:
             raise ValueError("Multiple gRPC host targets not yet supported")
@@ -70,7 +76,32 @@ class GrpcTransport(Transport):
         grpc_port = first_grpc.get("port", self._grpc_port)
 
         self._grpc_address = f"{grpc_host}:{grpc_port}"
-        self._channel = grpc.insecure_channel(self._grpc_address)
+
+        # Create channel — secure (TLS) or insecure
+        if self._use_ssl:
+            root_certs = None
+            if self._ca_certs:
+                with open(self._ca_certs, "rb") as f:
+                    root_certs = f.read()
+
+            private_key = None
+            cert_chain = None
+            if self._client_cert:
+                with open(self._client_cert, "rb") as f:
+                    cert_chain = f.read()
+            if self._client_key:
+                with open(self._client_key, "rb") as f:
+                    private_key = f.read()
+
+            credentials = grpc.ssl_channel_credentials(
+                root_certificates=root_certs,
+                private_key=private_key,
+                certificate_chain=cert_chain,
+            )
+            self._channel = grpc.secure_channel(self._grpc_address, credentials)
+        else:
+            self._channel = grpc.insecure_channel(self._grpc_address)
+
         self._document_stub = document_service_pb2_grpc.DocumentServiceStub(
             self._channel
         )
