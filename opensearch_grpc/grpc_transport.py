@@ -70,6 +70,7 @@ from opensearchpy.exceptions import (
     ConnectionTimeout,
     NotFoundError,
     RequestError,
+    SSLError,
     TransportError,
 )
 from opensearchpy.transport import Transport

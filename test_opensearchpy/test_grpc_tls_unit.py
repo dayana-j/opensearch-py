@@ -199,3 +199,156 @@ class TestOpenSearchGrpcTlsParams(TestCase):
                     hosts=[{"host": "localhost", "port": 9200}],
                     grpc_hosts=[{"host": "localhost", "port": 9400}],
                 )
+
+
+class TestGrpcExceptionMapping(TestCase):
+    """Test that _raise_grpc_error maps gRPC codes to opensearch-py exceptions."""
+
+    def _make_rpc_error(self, code, details="test error"):
+        """Create a mock grpc.RpcError with the given status code."""
+        from unittest.mock import MagicMock
+
+        error = MagicMock()
+        error.code.return_value = code
+        error.details.return_value = details
+        return error
+
+    def _get_transport(self):
+        """Create a GrpcTransport instance for testing."""
+        return GrpcTransport(
+            [{"host": "localhost", "port": 9200}],
+            grpc_hosts=[{"host": "localhost", "port": 9400}],
+        )
+
+    def test_unavailable_raises_connection_error(self) -> None:
+        """UNAVAILABLE → ConnectionError."""
+        from opensearchpy.exceptions import ConnectionError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.UNAVAILABLE, "connection refused")
+        with self.assertRaises(ConnectionError):
+            t._raise_grpc_error(error)
+        t.close()
+
+    def test_unavailable_with_ssl_raises_ssl_error(self) -> None:
+        """UNAVAILABLE with SSL details → SSLError."""
+        from opensearchpy.exceptions import SSLError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(
+            grpc.StatusCode.UNAVAILABLE, "SSL handshake failed"
+        )
+        with self.assertRaises(SSLError):
+            t._raise_grpc_error(error)
+        t.close()
+
+    def test_unavailable_with_tls_raises_ssl_error(self) -> None:
+        """UNAVAILABLE with TLS details → SSLError."""
+        from opensearchpy.exceptions import SSLError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(
+            grpc.StatusCode.UNAVAILABLE, "TLS certificate verification failed"
+        )
+        with self.assertRaises(SSLError):
+            t._raise_grpc_error(error)
+        t.close()
+
+    def test_deadline_exceeded_raises_connection_timeout(self) -> None:
+        """DEADLINE_EXCEEDED → ConnectionTimeout."""
+        from opensearchpy.exceptions import ConnectionTimeout
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED)
+        with self.assertRaises(ConnectionTimeout):
+            t._raise_grpc_error(error)
+        t.close()
+
+    def test_unauthenticated_raises_authentication_exception(self) -> None:
+        """UNAUTHENTICATED → AuthenticationException."""
+        from opensearchpy.exceptions import AuthenticationException
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.UNAUTHENTICATED)
+        with self.assertRaises(AuthenticationException) as ctx:
+            t._raise_grpc_error(error)
+        self.assertEqual(ctx.exception.status_code, 401)
+        t.close()
+
+    def test_permission_denied_raises_authorization_exception(self) -> None:
+        """PERMISSION_DENIED → AuthorizationException."""
+        from opensearchpy.exceptions import AuthorizationException
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.PERMISSION_DENIED)
+        with self.assertRaises(AuthorizationException) as ctx:
+            t._raise_grpc_error(error)
+        self.assertEqual(ctx.exception.status_code, 403)
+        t.close()
+
+    def test_not_found_raises_not_found_error(self) -> None:
+        """NOT_FOUND → NotFoundError."""
+        from opensearchpy.exceptions import NotFoundError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.NOT_FOUND)
+        with self.assertRaises(NotFoundError) as ctx:
+            t._raise_grpc_error(error)
+        self.assertEqual(ctx.exception.status_code, 404)
+        t.close()
+
+    def test_already_exists_raises_conflict_error(self) -> None:
+        """ALREADY_EXISTS → ConflictError."""
+        from opensearchpy.exceptions import ConflictError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.ALREADY_EXISTS)
+        with self.assertRaises(ConflictError) as ctx:
+            t._raise_grpc_error(error)
+        self.assertEqual(ctx.exception.status_code, 409)
+        t.close()
+
+    def test_invalid_argument_raises_request_error(self) -> None:
+        """INVALID_ARGUMENT → RequestError."""
+        from opensearchpy.exceptions import RequestError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.INVALID_ARGUMENT)
+        with self.assertRaises(RequestError) as ctx:
+            t._raise_grpc_error(error)
+        self.assertEqual(ctx.exception.status_code, 400)
+        t.close()
+
+    def test_unknown_code_raises_transport_error(self) -> None:
+        """Unknown gRPC code → TransportError."""
+        from opensearchpy.exceptions import TransportError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.INTERNAL, "internal error")
+        with self.assertRaises(TransportError) as ctx:
+            t._raise_grpc_error(error)
+        self.assertIn("INTERNAL", str(ctx.exception))
+        t.close()
+
+    def test_cancelled_raises_transport_error(self) -> None:
+        """CANCELLED → TransportError."""
+        from opensearchpy.exceptions import TransportError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(grpc.StatusCode.CANCELLED)
+        with self.assertRaises(TransportError):
+            t._raise_grpc_error(error)
+        t.close()
+
+    def test_error_details_in_exception_message(self) -> None:
+        """Error details are included in the exception message."""
+        from opensearchpy.exceptions import ConnectionError
+
+        t = self._get_transport()
+        error = self._make_rpc_error(
+            grpc.StatusCode.UNAVAILABLE, "failed to connect to all addresses"
+        )
+        with self.assertRaises(ConnectionError) as ctx:
+            t._raise_grpc_error(error)
+        self.assertIn("failed to connect", str(ctx.exception))
+        t.close()
