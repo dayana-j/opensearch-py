@@ -3328,7 +3328,7 @@ class OpenSearchGrpc(OpenSearch):
         "ssl_show_warn",
     )
 
-    _UNSUPPORTED_AUTH_ARGS = ("http_auth",)
+    _UNSUPPORTED_AUTH_ARGS: tuple = ()  # http_auth is now supported
 
     def __init__(
         self,
