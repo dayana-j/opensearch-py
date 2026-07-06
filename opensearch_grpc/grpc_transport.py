@@ -270,6 +270,9 @@ class GrpcTransport(Transport):
         details = error.details() or "gRPC error"
 
         if code == grpc.StatusCode.UNAVAILABLE:
+            # Detect SSL/TLS-specific failures
+            if "SSL" in details or "TLS" in details or "handshake" in details:
+                raise SSLError("N/A", details, error)
             raise ConnectionError("N/A", details, error)
         elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
             raise ConnectionTimeout("TIMEOUT", details, error)
