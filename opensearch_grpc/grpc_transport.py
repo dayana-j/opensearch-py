@@ -24,7 +24,6 @@ TLS/SSL Support:
     When use_ssl=False (default), an insecure channel is created.
 
     Not supported (no gRPC equivalent):
-    - ssl_assert_hostname: Not configurable in gRPC Python
     - ssl_assert_fingerprint: Not available in gRPC Python
     - ssl_show_warn: No equivalent in gRPC
 
@@ -151,6 +150,7 @@ class GrpcTransport(Transport):
         self._ca_certs = kwargs.get("ca_certs", None)
         self._client_cert = kwargs.get("client_cert", None)
         self._client_key = kwargs.get("client_key", None)
+        self._ssl_assert_hostname = kwargs.get("ssl_assert_hostname", None)
 
         # Validate single gRPC host — multiple targets not yet supported
         if self._grpc_hosts and len(self._grpc_hosts) > 1:
@@ -204,7 +204,16 @@ class GrpcTransport(Transport):
                 private_key=private_key,
                 certificate_chain=cert_chain,
             )
-            self._channel = grpc.secure_channel(self._grpc_address, credentials)
+            # Build channel options
+            options = []
+            if self._ssl_assert_hostname:
+                options.append(
+                    ("grpc.ssl_target_name_override", self._ssl_assert_hostname)
+                )
+
+            self._channel = grpc.secure_channel(
+                self._grpc_address, credentials, options=options or None
+            )
         else:
             self._channel = grpc.insecure_channel(self._grpc_address)
 
