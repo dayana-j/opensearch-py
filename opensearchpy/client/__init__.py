@@ -3319,9 +3319,8 @@ class OpenSearchGrpc(OpenSearch):
     """
 
     # Parameters that are not yet supported for gRPC
-    # (use_ssl, ca_certs, client_cert, client_key are now supported)
+    # (use_ssl, ca_certs, client_cert, client_key, ssl_context are now supported)
     _UNSUPPORTED_TLS_ARGS = (
-        "ssl_context",
         "ssl_version",
         "ssl_assert_hostname",
         "ssl_assert_fingerprint",

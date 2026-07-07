@@ -13,15 +13,17 @@ TLS/SSL Support:
     parameters as the REST client:
 
     - use_ssl=True: Creates a secure gRPC channel (grpc.secure_channel)
+    - ssl_context: A Python ssl.SSLContext — CA certs are extracted from it
+      and used for server verification. When provided, ca_certs is ignored.
     - ca_certs: Path to CA bundle for server certificate verification
     - client_cert: Path to client certificate for mTLS
     - client_key: Path to client private key for mTLS
 
-    When use_ssl=True without ca_certs, system default trusted CAs are used.
+    When use_ssl=True without ca_certs or ssl_context, system default
+    trusted CAs are used.
     When use_ssl=False (default), an insecure channel is created.
 
     Not supported (no gRPC equivalent):
-    - ssl_context: gRPC manages its own SSL internally
     - ssl_version: gRPC negotiates TLS version automatically
     - ssl_assert_hostname: Not configurable in gRPC Python
     - ssl_assert_fingerprint: Not available in gRPC Python
@@ -44,6 +46,16 @@ Usage:
         ca_certs="/path/to/root-ca.pem",
     )
 
+    # TLS with ssl_context
+    import ssl
+    ctx = ssl.create_default_context(cafile="/path/to/root-ca.pem")
+    client = OpenSearchGrpc(
+        hosts=[{"host": "localhost", "port": 9200}],
+        grpc_hosts=[{"host": "localhost", "port": 9400}],
+        use_ssl=True,
+        ssl_context=ctx,
+    )
+
     # Mutual TLS (mTLS)
     client = OpenSearchGrpc(
         hosts=[{"host": "localhost", "port": 9200}],
@@ -57,6 +69,7 @@ Usage:
 
 import base64
 import re
+import ssl
 from typing import Any, Callable, Collection, Mapping, Optional, Tuple, Union
 
 import grpc
@@ -135,6 +148,7 @@ class GrpcTransport(Transport):
 
         # Read TLS params (don't pop — REST fallback needs them too)
         self._use_ssl = kwargs.get("use_ssl", False)
+        self._ssl_context = kwargs.get("ssl_context", None)
         self._ca_certs = kwargs.get("ca_certs", None)
         self._client_cert = kwargs.get("client_cert", None)
         self._client_key = kwargs.get("client_key", None)
@@ -161,14 +175,18 @@ class GrpcTransport(Transport):
 
         # Create channel — secure (TLS/mTLS) or insecure
         # TLS behavior:
+        #   - use_ssl=True + ssl_context: Extract CA certs from context
         #   - use_ssl=True + ca_certs: Verify server using provided CA
-        #   - use_ssl=True + no ca_certs: Verify server using system CAs
+        #   - use_ssl=True + no ca_certs/ssl_context: Verify using system CAs
         #   - use_ssl=True + client_cert + client_key: Mutual TLS (mTLS)
         #   - use_ssl=False: No encryption (insecure channel)
         if self._use_ssl:
-            # Load root CA certificate for server verification
+            # Determine root CA certificates
             root_certs = None
-            if self._ca_certs:
+            if self._ssl_context:
+                # Extract CA certs from ssl.SSLContext (DER → PEM)
+                root_certs = self._extract_ca_certs_from_context(self._ssl_context)
+            elif self._ca_certs:
                 with open(self._ca_certs, "rb") as f:
                     root_certs = f.read()
 
@@ -330,6 +348,33 @@ class GrpcTransport(Transport):
         if len(parts) >= 2 and parts[-1] == endpoint:
             return "/".join(parts[:-1])
         return None
+
+    @staticmethod
+    def _extract_ca_certs_from_context(ctx: ssl.SSLContext) -> Optional[bytes]:
+        """Extract CA certificates from an ssl.SSLContext as PEM bytes.
+
+        Retrieves all loaded CA certs in DER format and converts them to
+        PEM for use with grpc.ssl_channel_credentials(root_certificates=...).
+
+        Returns None if no CA certs are loaded in the context.
+        """
+        der_certs = ctx.get_ca_certs(binary_form=True)
+        if not der_certs:
+            return None
+
+        import base64
+
+        pem_certs = []
+        for der_cert in der_certs:
+            b64 = base64.b64encode(der_cert).decode("ascii")
+            # Wrap at 64 characters per line (PEM standard)
+            lines = [b64[i : i + 64] for i in range(0, len(b64), 64)]
+            pem = "-----BEGIN CERTIFICATE-----\n"
+            pem += "\n".join(lines)
+            pem += "\n-----END CERTIFICATE-----\n"
+            pem_certs.append(pem)
+
+        return "".join(pem_certs).encode("ascii")
 
     def close(self) -> None:
         """Close gRPC channel and REST connections."""
