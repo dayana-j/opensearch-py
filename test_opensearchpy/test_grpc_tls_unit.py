@@ -221,15 +221,17 @@ class TestOpenSearchGrpcTlsParams(TestCase):
         )
         client.close()
 
-    def test_rejects_ssl_version(self) -> None:
-        """OpenSearchGrpc rejects ssl_version with NotImplementedError."""
-        with self.assertRaises(NotImplementedError) as ctx:
-            OpenSearchGrpc(
-                hosts=[{"host": "localhost", "port": 9200}],
-                grpc_hosts=[{"host": "localhost", "port": 9400}],
-                ssl_version="TLSv1_2",
-            )
-        self.assertIn("ssl_version", str(ctx.exception))
+    def test_accepts_ssl_version(self) -> None:
+        """OpenSearchGrpc accepts ssl_version without error."""
+        import ssl
+
+        client = OpenSearchGrpc(
+            hosts=[{"host": "localhost", "port": 9200}],
+            grpc_hosts=[{"host": "localhost", "port": 9400}],
+            use_ssl=True,
+            ssl_version=ssl.PROTOCOL_TLS_CLIENT,
+        )
+        client.close()
 
     def test_rejects_ssl_assert_hostname(self) -> None:
         """OpenSearchGrpc rejects ssl_assert_hostname with NotImplementedError."""

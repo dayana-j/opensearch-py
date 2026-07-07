@@ -24,7 +24,6 @@ TLS/SSL Support:
     When use_ssl=False (default), an insecure channel is created.
 
     Not supported (no gRPC equivalent):
-    - ssl_version: gRPC negotiates TLS version automatically
     - ssl_assert_hostname: Not configurable in gRPC Python
     - ssl_assert_fingerprint: Not available in gRPC Python
     - ssl_show_warn: No equivalent in gRPC
