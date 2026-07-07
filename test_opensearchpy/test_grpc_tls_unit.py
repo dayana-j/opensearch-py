@@ -166,6 +166,18 @@ class TestGrpcChannelCreation(TestCase):
         self.assertIn(b"-----BEGIN CERTIFICATE-----", result)
         self.assertIn(b"-----END CERTIFICATE-----", result)
 
+    def test_ssl_assert_hostname_sets_channel_option(self) -> None:
+        """ssl_assert_hostname maps to grpc.ssl_target_name_override."""
+        t = GrpcTransport(
+            [{"host": "localhost", "port": 9200}],
+            grpc_hosts=[{"host": "localhost", "port": 9400}],
+            use_ssl=True,
+            ssl_assert_hostname="my-server.example.com",
+        )
+        self.assertEqual(t._ssl_assert_hostname, "my-server.example.com")
+        self.assertIsNotNone(t._channel)
+        t.close()
+
     def test_extract_ca_certs_from_empty_context(self) -> None:
         """_extract_ca_certs_from_context returns None for empty context."""
         import ssl
@@ -233,15 +245,15 @@ class TestOpenSearchGrpcTlsParams(TestCase):
         )
         client.close()
 
-    def test_rejects_ssl_assert_hostname(self) -> None:
-        """OpenSearchGrpc rejects ssl_assert_hostname with NotImplementedError."""
-        with self.assertRaises(NotImplementedError) as ctx:
-            OpenSearchGrpc(
-                hosts=[{"host": "localhost", "port": 9200}],
-                grpc_hosts=[{"host": "localhost", "port": 9400}],
-                ssl_assert_hostname=True,
-            )
-        self.assertIn("ssl_assert_hostname", str(ctx.exception))
+    def test_accepts_ssl_assert_hostname(self) -> None:
+        """OpenSearchGrpc accepts ssl_assert_hostname without error."""
+        client = OpenSearchGrpc(
+            hosts=[{"host": "localhost", "port": 9200}],
+            grpc_hosts=[{"host": "localhost", "port": 9400}],
+            use_ssl=True,
+            ssl_assert_hostname="my-server.example.com",
+        )
+        client.close()
 
     def test_rejects_ssl_assert_fingerprint(self) -> None:
         """OpenSearchGrpc rejects ssl_assert_fingerprint with NotImplementedError."""
