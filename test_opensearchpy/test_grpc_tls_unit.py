@@ -114,6 +114,68 @@ class TestGrpcChannelCreation(TestCase):
         self.assertFalse(t._use_ssl)
         t.close()
 
+    def test_secure_channel_with_ssl_context(self) -> None:
+        """use_ssl=True with ssl_context extracts CA certs from context."""
+        import ssl
+
+        ctx = ssl.create_default_context()
+        t = GrpcTransport(
+            [{"host": "localhost", "port": 9200}],
+            grpc_hosts=[{"host": "localhost", "port": 9400}],
+            use_ssl=True,
+            ssl_context=ctx,
+        )
+        self.assertTrue(t._use_ssl)
+        self.assertIs(t._ssl_context, ctx)
+        self.assertIsNotNone(t._channel)
+        t.close()
+
+    def test_ssl_context_overrides_ca_certs(self) -> None:
+        """ssl_context takes precedence over ca_certs when both provided."""
+        import ssl
+
+        ctx = ssl.create_default_context()
+        # Provide both ssl_context and ca_certs — ssl_context wins
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".pem", delete=False) as f:
+            f.write(
+                b"-----BEGIN CERTIFICATE-----\nMIIBkTCB+wIJALx0v\n-----END CERTIFICATE-----\n"
+            )
+            ca_path = f.name
+
+        try:
+            t = GrpcTransport(
+                [{"host": "localhost", "port": 9200}],
+                grpc_hosts=[{"host": "localhost", "port": 9400}],
+                use_ssl=True,
+                ssl_context=ctx,
+                ca_certs=ca_path,
+            )
+            self.assertIs(t._ssl_context, ctx)
+            t.close()
+        finally:
+            os.unlink(ca_path)
+
+    def test_extract_ca_certs_from_context(self) -> None:
+        """_extract_ca_certs_from_context returns PEM-encoded CA certs."""
+        import ssl
+
+        ctx = ssl.create_default_context()
+        result = GrpcTransport._extract_ca_certs_from_context(ctx)
+        # System CAs should be present
+        self.assertIsNotNone(result)
+        self.assertIn(b"-----BEGIN CERTIFICATE-----", result)
+        self.assertIn(b"-----END CERTIFICATE-----", result)
+
+    def test_extract_ca_certs_from_empty_context(self) -> None:
+        """_extract_ca_certs_from_context returns None for empty context."""
+        import ssl
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        result = GrpcTransport._extract_ca_certs_from_context(ctx)
+        self.assertIsNone(result)
+
 
 class TestOpenSearchGrpcTlsParams(TestCase):
     """Test that OpenSearchGrpc handles TLS params correctly."""
@@ -146,15 +208,18 @@ class TestOpenSearchGrpcTlsParams(TestCase):
         finally:
             os.unlink(ca_path)
 
-    def test_rejects_ssl_context(self) -> None:
-        """OpenSearchGrpc rejects ssl_context with NotImplementedError."""
-        with self.assertRaises(NotImplementedError) as ctx:
-            OpenSearchGrpc(
-                hosts=[{"host": "localhost", "port": 9200}],
-                grpc_hosts=[{"host": "localhost", "port": 9400}],
-                ssl_context="something",
-            )
-        self.assertIn("ssl_context", str(ctx.exception))
+    def test_accepts_ssl_context(self) -> None:
+        """OpenSearchGrpc accepts ssl_context without error."""
+        import ssl
+
+        ctx = ssl.create_default_context()
+        client = OpenSearchGrpc(
+            hosts=[{"host": "localhost", "port": 9200}],
+            grpc_hosts=[{"host": "localhost", "port": 9400}],
+            use_ssl=True,
+            ssl_context=ctx,
+        )
+        client.close()
 
     def test_rejects_ssl_version(self) -> None:
         """OpenSearchGrpc rejects ssl_version with NotImplementedError."""
