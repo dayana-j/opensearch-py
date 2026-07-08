@@ -196,3 +196,134 @@ class TestSecureGrpc(TestCase):
                 )
         finally:
             client.close()
+
+
+class TestTlsSettings(TestCase):
+    """Test various TLS configuration options."""
+
+    def _bulk_succeeds(self, client: OpenSearchGrpc) -> bool:
+        """Helper: attempt a bulk request and return True if it succeeds."""
+        try:
+            resp = client.bulk(
+                body=[
+                    {"index": {"_index": "test-tls-settings", "_id": "1"}},
+                    {"title": "TLS settings test"},
+                ],
+                refresh=True,
+            )
+            return not resp["errors"]
+        finally:
+            client.indices.delete(index="test-tls-settings", ignore=[404])
+
+    def test_use_ssl_true_with_verify_certs_false(self) -> None:
+        """TLS channel with verify_certs=False (skip server cert validation)."""
+        client = OpenSearchGrpc(
+            hosts=[OPENSEARCH_URL],
+            grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+            http_auth=("admin", OPENSEARCH_PASSWORD),
+            use_ssl=True,
+            verify_certs=False,
+        )
+        try:
+            self.assertTrue(self._bulk_succeeds(client))
+        finally:
+            client.close()
+
+    def test_use_ssl_true_with_ca_certs(self) -> None:
+        """TLS channel with explicit CA cert for server verification."""
+        ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
+        if not ca_certs:
+            self.skipTest("OPENSEARCH_CA_CERTS not set — cannot test ca_certs param")
+
+        client = OpenSearchGrpc(
+            hosts=[OPENSEARCH_URL],
+            grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+            http_auth=("admin", OPENSEARCH_PASSWORD),
+            use_ssl=True,
+            ca_certs=ca_certs,
+            verify_certs=True,
+        )
+        try:
+            self.assertTrue(self._bulk_succeeds(client))
+        finally:
+            client.close()
+
+    def test_use_ssl_true_with_ssl_context(self) -> None:
+        """TLS channel using ssl_context to provide CA certs."""
+        import ssl
+
+        ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
+        if not ca_certs:
+            # Use a permissive context when CA cert path isn't available
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        else:
+            ctx = ssl.create_default_context(cafile=ca_certs)
+
+        client = OpenSearchGrpc(
+            hosts=[OPENSEARCH_URL],
+            grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+            http_auth=("admin", OPENSEARCH_PASSWORD),
+            use_ssl=True,
+            ssl_context=ctx,
+        )
+        try:
+            self.assertTrue(self._bulk_succeeds(client))
+        finally:
+            client.close()
+
+    def test_ssl_assert_hostname_override(self) -> None:
+        """TLS channel with ssl_assert_hostname overriding expected server name."""
+        # ssl_assert_hostname maps to grpc.ssl_target_name_override
+        # Using the actual hostname should succeed
+        client = OpenSearchGrpc(
+            hosts=[OPENSEARCH_URL],
+            grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+            http_auth=("admin", OPENSEARCH_PASSWORD),
+            use_ssl=True,
+            verify_certs=False,
+            ssl_assert_hostname=GRPC_HOST,
+        )
+        try:
+            self.assertTrue(self._bulk_succeeds(client))
+        finally:
+            client.close()
+
+    def test_ssl_version_accepted_silently(self) -> None:
+        """ssl_version is accepted without error (gRPC auto-negotiates)."""
+        import ssl
+
+        client = OpenSearchGrpc(
+            hosts=[OPENSEARCH_URL],
+            grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+            http_auth=("admin", OPENSEARCH_PASSWORD),
+            use_ssl=True,
+            verify_certs=False,
+            ssl_version=ssl.PROTOCOL_TLS_CLIENT,
+        )
+        try:
+            self.assertTrue(self._bulk_succeeds(client))
+        finally:
+            client.close()
+
+    def test_use_ssl_false_against_tls_server_fails(self) -> None:
+        """Insecure channel against a TLS-enabled server should fail."""
+        from opensearchpy.exceptions import ConnectionError
+
+        client = OpenSearchGrpc(
+            hosts=[OPENSEARCH_URL],
+            grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+            http_auth=("admin", OPENSEARCH_PASSWORD),
+            use_ssl=False,
+        )
+        try:
+            with self.assertRaises((ConnectionError, Exception)):
+                client.bulk(
+                    body=[
+                        {"index": {"_index": "test-tls-insecure", "_id": "1"}},
+                        {"title": "Should fail"},
+                    ],
+                )
+        finally:
+            client.close()
