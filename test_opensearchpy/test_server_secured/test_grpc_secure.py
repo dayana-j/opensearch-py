@@ -62,6 +62,8 @@ class TestSecureGrpc(TestCase):
 
         Always uses ca_certs when available since gRPC Python cannot
         disable certificate verification (unlike REST with verify_certs=False).
+        Uses ssl_assert_hostname="localhost" because the demo installer's cert
+        is issued for localhost, but the Docker network uses hostname "instance".
         """
         ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
         if not ca_certs:
@@ -73,6 +75,7 @@ class TestSecureGrpc(TestCase):
             "use_ssl": True,
             "verify_certs": False,
             "ca_certs": ca_certs,
+            "ssl_assert_hostname": "localhost",
         }
         defaults.update(kwargs)
         return OpenSearchGrpc(**defaults)
@@ -194,8 +197,8 @@ class TestSecureGrpc(TestCase):
             hosts=[OPENSEARCH_URL],
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
             use_ssl=True,
-            verify_certs=False,
             ca_certs=ca_certs,
+            ssl_assert_hostname="localhost",
         )
         try:
             with self.assertRaises(AuthenticationException):
@@ -252,6 +255,7 @@ class TestTlsSettings(TestCase):
             use_ssl=True,
             verify_certs=False,
             ca_certs=ca_certs,
+            ssl_assert_hostname="localhost",
         )
         try:
             self.assertTrue(self._bulk_succeeds(client))
@@ -270,7 +274,7 @@ class TestTlsSettings(TestCase):
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
             ca_certs=ca_certs,
-            verify_certs=True,
+            ssl_assert_hostname="localhost",
         )
         try:
             self.assertTrue(self._bulk_succeeds(client))
@@ -295,6 +299,7 @@ class TestTlsSettings(TestCase):
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
             ssl_context=ctx,
+            ssl_assert_hostname="localhost",
         )
         try:
             self.assertTrue(self._bulk_succeeds(client))
@@ -309,8 +314,7 @@ class TestTlsSettings(TestCase):
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
             ca_certs=self.ca_certs,
-            verify_certs=False,
-            ssl_assert_hostname=GRPC_HOST,
+            ssl_assert_hostname="localhost",
         )
         try:
             self.assertTrue(self._bulk_succeeds(client))
@@ -327,7 +331,7 @@ class TestTlsSettings(TestCase):
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
             ca_certs=self.ca_certs,
-            verify_certs=False,
+            ssl_assert_hostname="localhost",
             ssl_version=ssl.PROTOCOL_TLS_CLIENT,
         )
         try:
