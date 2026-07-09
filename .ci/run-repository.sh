@@ -45,6 +45,8 @@ if [ "$COMPARE_VERSION" != "$OPENSEARCH_REQUIRED_VERSION" ]; then
   --env "TEST_TYPE=server" \
   --env "TEST_PATTERN=${TEST_PATTERN}" \
   --env "OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin" \
+  --env "OPENSEARCH_GRPC_HOST=${opensearch_node_name}" \
+  --env "OPENSEARCH_GRPC_PORT=9400" \
   --name opensearch-py \
   --rm \
   opensearch-project/opensearch-py \
@@ -60,6 +62,8 @@ else
   --env "TEST_TYPE=server" \
   --env "TEST_PATTERN=${TEST_PATTERN}" \
   --env "OPENSEARCH_INITIAL_ADMIN_PASSWORD=myStrongPassword123!" \
+  --env "OPENSEARCH_GRPC_HOST=${opensearch_node_name}" \
+  --env "OPENSEARCH_GRPC_PORT=9400" \
   --name opensearch-py \
   --rm \
   opensearch-project/opensearch-py \

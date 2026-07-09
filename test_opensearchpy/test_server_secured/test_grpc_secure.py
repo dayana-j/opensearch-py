@@ -12,47 +12,50 @@
 test_grpc_secure.py — gRPC TLS + Basic Auth Integration Tests
 
 End-to-end tests verifying that the gRPC transport works correctly with
-TLS encryption and basic authentication enabled. Requires OpenSearch
+TLS encryption and basic authentication enabled. Requires OpenSearch 3.x
 running with secure-transport-grpc and security plugin (FGAC).
 
-Skips automatically if secure gRPC is not available.
+Uses the same pattern as other test_server_secured tests: derives
+connection info from OPENSEARCH_URL and skips per-test if gRPC is
+not available.
 """
 
 import os
 from typing import Any
-from unittest import SkipTest, TestCase
-
-import grpc
+from unittest import TestCase
+from urllib.parse import urlparse
 
 from opensearchpy.client import OpenSearchGrpc
 from opensearchpy.exceptions import AuthenticationException
+from opensearchpy.helpers.test import OPENSEARCH_URL
 
+# Derive gRPC host from OPENSEARCH_URL (same host as REST)
+_parsed = urlparse(OPENSEARCH_URL)
 GRPC_PORT = int(os.environ.get("OPENSEARCH_GRPC_PORT", "9400"))
-GRPC_HOST = os.environ.get("OPENSEARCH_GRPC_HOST", "localhost")
-OPENSEARCH_URL = os.environ.get("OPENSEARCH_URL", "https://localhost:9200")
+GRPC_HOST = os.environ.get("OPENSEARCH_GRPC_HOST", _parsed.hostname or "localhost")
 OPENSEARCH_PASSWORD = os.environ.get(
     "OPENSEARCH_INITIAL_ADMIN_PASSWORD", "myStrongPassword123!"
 )
 
 
-def _grpc_tls_available() -> bool:
-    """Check if secure gRPC is reachable."""
+def _grpc_available() -> bool:
+    """Check if gRPC port is reachable via TCP."""
+    import socket
+
     try:
-        credentials = grpc.ssl_channel_credentials()
-        channel = grpc.secure_channel(f"{GRPC_HOST}:{GRPC_PORT}", credentials)
-        grpc.channel_ready_future(channel).result(timeout=3)
-        channel.close()
+        sock = socket.create_connection((GRPC_HOST, GRPC_PORT), timeout=3)
+        sock.close()
         return True
-    except Exception:
+    except (OSError, socket.timeout):
         return False
-
-
-if not _grpc_tls_available():
-    raise SkipTest(f"Secure gRPC not available on {GRPC_HOST}:{GRPC_PORT}")
 
 
 class TestSecureGrpc(TestCase):
     """Test gRPC client with TLS + basic auth."""
+
+    def setUp(self) -> None:
+        if not _grpc_available():
+            self.skipTest(f"gRPC not available on {GRPC_HOST}:{GRPC_PORT}")
 
     def _get_client(self, **kwargs: Any) -> OpenSearchGrpc:
         """Create a TLS + auth enabled gRPC client."""
@@ -201,6 +204,10 @@ class TestSecureGrpc(TestCase):
 class TestTlsSettings(TestCase):
     """Test various TLS configuration options."""
 
+    def setUp(self) -> None:
+        if not _grpc_available():
+            self.skipTest(f"gRPC not available on {GRPC_HOST}:{GRPC_PORT}")
+
     def _bulk_succeeds(self, client: OpenSearchGrpc) -> bool:
         """Helper: attempt a bulk request and return True if it succeeds."""
         try:
@@ -254,7 +261,6 @@ class TestTlsSettings(TestCase):
 
         ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
         if not ca_certs:
-            # Use a permissive context when CA cert path isn't available
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
@@ -275,8 +281,6 @@ class TestTlsSettings(TestCase):
 
     def test_ssl_assert_hostname_override(self) -> None:
         """TLS channel with ssl_assert_hostname overriding expected server name."""
-        # ssl_assert_hostname maps to grpc.ssl_target_name_override
-        # Using the actual hostname should succeed
         client = OpenSearchGrpc(
             hosts=[OPENSEARCH_URL],
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
