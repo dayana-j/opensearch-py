@@ -58,18 +58,22 @@ class TestSecureGrpc(TestCase):
             self.skipTest(f"gRPC not available on {GRPC_HOST}:{GRPC_PORT}")
 
     def _get_client(self, **kwargs: Any) -> OpenSearchGrpc:
-        """Create a TLS + auth enabled gRPC client."""
+        """Create a TLS + auth enabled gRPC client.
+
+        Always uses ca_certs when available since gRPC Python cannot
+        disable certificate verification (unlike REST with verify_certs=False).
+        """
         ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
+        if not ca_certs:
+            self.skipTest("OPENSEARCH_CA_CERTS not set — gRPC requires CA cert for TLS")
         defaults: dict = {
             "hosts": [OPENSEARCH_URL],
             "grpc_hosts": [{"host": GRPC_HOST, "port": GRPC_PORT}],
             "http_auth": ("admin", OPENSEARCH_PASSWORD),
             "use_ssl": True,
             "verify_certs": False,
+            "ca_certs": ca_certs,
         }
-        if ca_certs:
-            defaults["ca_certs"] = ca_certs
-            defaults["verify_certs"] = True
         defaults.update(kwargs)
         return OpenSearchGrpc(**defaults)
 
@@ -183,11 +187,15 @@ class TestSecureGrpc(TestCase):
 
     def test_no_credentials_raises_authentication_exception(self) -> None:
         """No credentials on a secured node raises AuthenticationException."""
+        ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
+        if not ca_certs:
+            self.skipTest("OPENSEARCH_CA_CERTS not set — gRPC requires CA cert for TLS")
         client = OpenSearchGrpc(
             hosts=[OPENSEARCH_URL],
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
             use_ssl=True,
             verify_certs=False,
+            ca_certs=ca_certs,
         )
         try:
             with self.assertRaises(AuthenticationException):
@@ -207,6 +215,9 @@ class TestTlsSettings(TestCase):
     def setUp(self) -> None:
         if not _grpc_available():
             self.skipTest(f"gRPC not available on {GRPC_HOST}:{GRPC_PORT}")
+        self.ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
+        if not self.ca_certs:
+            self.skipTest("OPENSEARCH_CA_CERTS not set — gRPC requires CA cert for TLS")
 
     def _bulk_succeeds(self, client: OpenSearchGrpc) -> bool:
         """Helper: attempt a bulk request and return True if it succeeds."""
@@ -223,13 +234,24 @@ class TestTlsSettings(TestCase):
             client.indices.delete(index="test-tls-settings", ignore=[404])
 
     def test_use_ssl_true_with_verify_certs_false(self) -> None:
-        """TLS channel with verify_certs=False (skip server cert validation)."""
+        """TLS channel with verify_certs=False still needs CA for gRPC.
+
+        Note: gRPC Python does not support disabling certificate verification.
+        When verify_certs=False is passed, the REST fallback skips verification,
+        but the gRPC channel still requires a valid root CA. This test verifies
+        that the channel works when the CA cert is available.
+        """
+        ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
+        if not ca_certs:
+            self.skipTest("OPENSEARCH_CA_CERTS not set — gRPC requires CA cert")
+
         client = OpenSearchGrpc(
             hosts=[OPENSEARCH_URL],
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
             verify_certs=False,
+            ca_certs=ca_certs,
         )
         try:
             self.assertTrue(self._bulk_succeeds(client))
@@ -286,6 +308,7 @@ class TestTlsSettings(TestCase):
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
+            ca_certs=self.ca_certs,
             verify_certs=False,
             ssl_assert_hostname=GRPC_HOST,
         )
@@ -303,6 +326,7 @@ class TestTlsSettings(TestCase):
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
             http_auth=("admin", OPENSEARCH_PASSWORD),
             use_ssl=True,
+            ca_certs=self.ca_certs,
             verify_certs=False,
             ssl_version=ssl.PROTOCOL_TLS_CLIENT,
         )
