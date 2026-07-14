@@ -282,7 +282,7 @@ class TestTlsSettings(TestCase):
             client.close()
 
     def test_use_ssl_true_with_ssl_context(self) -> None:
-        """TLS channel using ssl_context to provide CA certs."""
+        """TLS channel using ssl_context to provide CA certs for gRPC."""
         import ssl
 
         ca_certs = os.environ.get("OPENSEARCH_CA_CERTS", None)
@@ -292,10 +292,12 @@ class TestTlsSettings(TestCase):
             ctx.verify_mode = ssl.CERT_NONE
         else:
             ctx = ssl.create_default_context(cafile=ca_certs)
-            # Disable hostname check — cert is for 'localhost' but we connect to 'instance'
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_REQUIRED
 
+        # Test that ssl_context works for the gRPC channel.
+        # Use ssl_assert_hostname="localhost" for the gRPC hostname override.
+        # Use ca_certs + verify_certs=False for the REST fallback (cleanup).
         client = OpenSearchGrpc(
             hosts=[OPENSEARCH_URL],
             grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
@@ -303,11 +305,31 @@ class TestTlsSettings(TestCase):
             use_ssl=True,
             ssl_context=ctx,
             ssl_assert_hostname="localhost",
-            verify_certs=False,
+            ca_certs=ca_certs,
         )
         try:
-            self.assertTrue(self._bulk_succeeds(client))
+            # Bulk goes over gRPC — uses ssl_context for CA verification
+            resp = client.bulk(
+                body=[
+                    {"index": {"_index": "test-tls-ctx", "_id": "1"}},
+                    {"title": "ssl_context test"},
+                ],
+                refresh=True,
+            )
+            self.assertFalse(resp["errors"])
         finally:
+            # Cleanup via a separate client that doesn't use ssl_context
+            cleanup = OpenSearchGrpc(
+                hosts=[OPENSEARCH_URL],
+                grpc_hosts=[{"host": GRPC_HOST, "port": GRPC_PORT}],
+                http_auth=("admin", OPENSEARCH_PASSWORD),
+                use_ssl=True,
+                verify_certs=False,
+                ca_certs=self.ca_certs,
+                ssl_assert_hostname="localhost",
+            )
+            cleanup.indices.delete(index="test-tls-ctx", ignore=[404])
+            cleanup.close()
             client.close()
 
     def test_ssl_assert_hostname_override(self) -> None:
