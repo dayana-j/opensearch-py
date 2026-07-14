@@ -292,6 +292,9 @@ class TestTlsSettings(TestCase):
             ctx.verify_mode = ssl.CERT_NONE
         else:
             ctx = ssl.create_default_context(cafile=ca_certs)
+            # Disable hostname check — cert is for 'localhost' but we connect to 'instance'
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_REQUIRED
 
         client = OpenSearchGrpc(
             hosts=[OPENSEARCH_URL],
