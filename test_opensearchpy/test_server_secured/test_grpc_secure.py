@@ -303,6 +303,7 @@ class TestTlsSettings(TestCase):
             use_ssl=True,
             ssl_context=ctx,
             ssl_assert_hostname="localhost",
+            verify_certs=False,
         )
         try:
             self.assertTrue(self._bulk_succeeds(client))
