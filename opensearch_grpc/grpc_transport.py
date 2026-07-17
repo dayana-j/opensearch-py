@@ -191,13 +191,11 @@ class GrpcTransport(Transport):
                 except ConnectionTimeout:
                     if self.retry_on_timeout and attempt < self.max_retries:
                         continue
-                    # Fallback to REST after retries exhausted
-                    break
+                    raise
                 except ConnectionError:
                     if attempt < self.max_retries:
                         continue
-                    # Fallback to REST after retries exhausted
-                    break
+                    raise
                 except TransportError as e:
                     if (
                         hasattr(e, "status_code")
@@ -205,8 +203,7 @@ class GrpcTransport(Transport):
                         and attempt < self.max_retries
                     ):
                         continue
-                    # Fallback to REST after retries exhausted
-                    break
+                    raise
 
         return super().perform_request(
             method,
