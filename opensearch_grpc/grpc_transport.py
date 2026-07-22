@@ -108,6 +108,49 @@ class BasicAuthInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
         return continuation(new_details, request)
 
 
+class BearerTokenInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[misc]
+    """gRPC interceptor that adds Bearer token auth to every unary call."""
+
+    def __init__(self, token: str) -> None:
+        if token.lower().startswith("bearer "):
+            self._auth_header = token
+        else:
+            self._auth_header = f"Bearer {token}"
+
+    def intercept_unary_unary(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        metadata = list(client_call_details.metadata or [])
+        metadata.append(("authorization", self._auth_header))
+        new_details = client_call_details._replace(metadata=metadata)
+        return continuation(new_details, request)
+
+
+class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[misc]
+    """gRPC interceptor that signs every call with AWS SigV4."""
+
+    def __init__(self, credentials: Any, region: str, service: str = "es", host: str = "localhost") -> None:
+        from opensearchpy.helpers.signer import AWSV4Signer
+
+        self._signer = AWSV4Signer(credentials, region, service)
+        self._host = host
+
+    def intercept_unary_unary(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        grpc_method = client_call_details.method
+        url = f"https://{self._host}{grpc_method}"
+        body = request.SerializeToString() if hasattr(request, "SerializeToString") else None
+        signed_headers = self._signer.sign(method="POST", url=url, body=body)
+
+        metadata = list(client_call_details.metadata or [])
+        for key, value in signed_headers.items():
+            metadata.append((key.lower(), value))
+
+        new_details = client_call_details._replace(metadata=metadata)
+        return continuation(new_details, request)
+
+
 class GrpcTransport(Transport):
     """
     Transport that routes bulk operations over gRPC.
@@ -235,12 +278,32 @@ class GrpcTransport(Transport):
 
         # Wrap channel with auth interceptor if credentials provided
         if self._http_auth is not None:
-            if isinstance(self._http_auth, (tuple, list)):
+            if callable(self._http_auth) and not isinstance(self._http_auth, (tuple, list)):
+                # Callable auth — SigV4 signer
+                if hasattr(self._http_auth, "signer"):
+                    interceptor = AWSV4GrpcInterceptor(
+                        credentials=self._http_auth.signer.credentials,
+                        region=self._http_auth.signer.region,
+                        service=self._http_auth.signer.service,
+                        host=grpc_host,
+                    )
+                else:
+                    raise NotImplementedError(
+                        "Custom callable auth is not supported for gRPC. "
+                        "Use AWSV4SignerAuth or http_auth=('user', 'pass')."
+                    )
+            elif isinstance(self._http_auth, (tuple, list)):
                 username, password = self._http_auth[0], self._http_auth[1]
+                interceptor = BasicAuthInterceptor(username, password)
+            elif isinstance(self._http_auth, str) and (
+                self._http_auth.startswith("Bearer ")
+                or self._http_auth.startswith("bearer ")
+            ):
+                interceptor = BearerTokenInterceptor(self._http_auth)
             else:
                 # String format "user:pass"
                 username, password = str(self._http_auth).split(":", 1)
-            interceptor = BasicAuthInterceptor(username, password)
+                interceptor = BasicAuthInterceptor(username, password)
             self._channel = grpc.intercept_channel(self._channel, interceptor)
 
         self._document_stub = document_service_pb2_grpc.DocumentServiceStub(
