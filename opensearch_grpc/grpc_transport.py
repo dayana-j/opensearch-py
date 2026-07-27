@@ -28,7 +28,7 @@ TLS/SSL Support:
     - ssl_show_warn: No equivalent in gRPC
 
 Usage:
-    from opensearchpy.client import OpenSearchGrpc
+    from opensearchpy import OpenSearchGrpc
 
     # Insecure (no TLS)
     client = OpenSearchGrpc(
