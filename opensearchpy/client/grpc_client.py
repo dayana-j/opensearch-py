@@ -17,23 +17,19 @@
 # -----------------------------------------------------------------------------------------+
 
 
-from typing import TYPE_CHECKING, Any, Iterator, cast
+from typing import Any
 
 from ..exceptions import ImproperlyConfigured
 from . import OpenSearch
 
-if TYPE_CHECKING:
-    from opensearch_grpc.grpc_transport import GrpcTransport
-
 
 class OpenSearchGrpc(OpenSearch):
     """
-    OpenSearch client with gRPC transport for bulk and ML streaming operations.
+    OpenSearch client with gRPC transport for bulk document operations.
 
     Extends the standard OpenSearch client with gRPC channel management.
-    Bulk requests are routed over gRPC for better performance; ML prediction
-    and agent execution can be streamed over gRPC; all other operations fall
-    through to REST automatically.
+    Bulk requests are routed over gRPC for better performance; all other
+    operations fall through to REST automatically.
 
     Supported parameters:
         - hosts: REST endpoint(s) for fallback operations
@@ -62,20 +58,6 @@ class OpenSearchGrpc(OpenSearch):
 
         # Bulk goes over gRPC automatically
         client.bulk(body=[...])
-
-        # ML prediction stream over gRPC
-        for chunk in client.predict_model_stream(
-            model_id='my-model',
-            body={'parameters': {'messages': [{'role': 'user', 'content': 'Hi'}]}},
-        ):
-            print(chunk)
-
-        # ML agent execution stream over gRPC
-        for chunk in client.execute_agent_stream(
-            agent_id='my-agent',
-            body={'parameters': {'question': 'How many indices are in my cluster?'}},
-        ):
-            print(chunk)
 
         # Everything else uses REST
         client.search(index='my-index', body={'query': {'match_all': {}}})
@@ -127,32 +109,45 @@ class OpenSearchGrpc(OpenSearch):
 
         super().__init__(hosts, transport_class=GrpcTransport, **kwargs)
 
-    def predict_model_stream(
+    def bulk(
         self,
-        *,
-        model_id: Any,
-        body: Any = None,
-    ) -> Iterator[Any]:
-        """
-        Predict a model in streaming mode over gRPC.
+        body: Any,
+        index: Any = None,
+        params: Any = None,
+        headers: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Optimized bulk that bypasses NDJSON serialization for gRPC.
 
-        :arg model_id: the deployed model id.
-        :arg body: request body, e.g. ``{"parameters": {"messages": [...]}}``.
-        """
-        transport = cast("GrpcTransport", self.transport)
-        return transport.predict_model_stream(model_id=model_id, body=body)
+        The standard client serializes body to NDJSON via _bulk_body(),
+        which the gRPC translation layer then parses back to dicts.
+        This override passes raw dicts directly to perform_request(),
+        eliminating two unnecessary serialization passes:
 
-    def execute_agent_stream(
-        self,
-        *,
-        agent_id: Any,
-        body: Any = None,
-    ) -> Iterator[Any]:
+        Standard: dicts → NDJSON → parse back → JSON for protobuf (3x serialize)
+        Optimized: dicts → JSON for protobuf (1x serialize)
         """
-        Execute an agent in streaming mode over gRPC.
+        from .utils import SKIP_IN_PATH, _make_path
 
-        :arg agent_id: the agent id.
-        :arg body: request body, e.g. ``{"parameters": {"question": "..."}}``.
-        """
-        transport = cast("GrpcTransport", self.transport)
-        return transport.execute_agent_stream(agent_id=agent_id, body=body)
+        if body in SKIP_IN_PATH:
+            raise ValueError("Empty value passed for a required argument 'body'.")
+
+        # Pass query params from kwargs
+        if params is None:
+            params = {}
+        for key in ("refresh", "timeout", "pipeline", "routing", "require_alias",
+                    "_source", "_source_excludes", "_source_includes",
+                    "wait_for_active_shards"):
+            if key in kwargs:
+                params[key] = kwargs.pop(key)
+
+        # Skip _bulk_body() — pass raw body directly to transport.
+        # BulkRequestProtoBuilder.from_body() handles both list-of-dicts
+        # and NDJSON strings natively.
+        return self.transport.perform_request(
+            "POST",
+            _make_path(index, "_bulk"),
+            params=params,
+            headers=headers,
+            body=body,
+        )
