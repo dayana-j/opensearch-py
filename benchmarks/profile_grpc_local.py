@@ -30,7 +30,7 @@ except ImportError:
 HOST = "localhost"
 REST_PORT = 9200
 GRPC_PORT = 9400
-AUTH = ("admin", "myStrongPassword123!")
+AUTH = None
 INDEX = "profile-test"
 
 
@@ -115,11 +115,10 @@ def main():
 
     body = generate_body(args.docs)
 
-    # REST
+    # REST (no security)
     rest_client = OpenSearch(
         hosts=[{"host": HOST, "port": REST_PORT}],
-        http_auth=AUTH,
-        use_ssl=True,
+        use_ssl=False,
         verify_certs=False,
     )
     rest_result = profile_transport(rest_client, body, "REST Bulk", args.batches)
@@ -130,9 +129,7 @@ def main():
         grpc_client = OpenSearchGrpc(
             hosts=[{"host": HOST, "port": REST_PORT}],
             grpc_hosts=[{"host": HOST, "port": GRPC_PORT}],
-            http_auth=AUTH,
-            use_ssl=True,
-            verify_certs=False,
+            use_ssl=False,
         )
         grpc_result = profile_transport(grpc_client, body, "gRPC Bulk", args.batches)
         grpc_client.close()
