@@ -69,10 +69,27 @@ import base64
 import re
 import ssl
 from typing import Any, Callable, Collection, Mapping, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Iterator,
+    Mapping,
+    Optional,
+    Union,
+)
 
 import grpc
-from opensearch.protobufs.services import document_service_pb2_grpc
+from opensearch.protobufs.services import (
+    document_service_pb2_grpc,
+    ml_service_pb2_grpc,
+)
 
+from opensearch_grpc.ml_translation import (
+    MlExecuteAgentStreamRequestBuilder,
+    MlPredictModelStreamRequestBuilder,
+    MlStreamResponseConverter,
+)
 from opensearch_grpc.translation import BulkRequestProtoBuilder, ResponseConverter
 from opensearchpy.exceptions import (
     AuthenticationException,
@@ -274,6 +291,7 @@ class GrpcTransport(Transport):
         self._document_stub = document_service_pb2_grpc.DocumentServiceStub(
             self._channel
         )
+        self._ml_stub = ml_service_pb2_grpc.MLServiceStub(self._channel)
 
     def perform_request(
         self,
@@ -369,6 +387,54 @@ class GrpcTransport(Transport):
 
         return ResponseConverter._convert_bulk_items(response)
 
+    # ─── ML gRPC Streaming ──────────────────────────────────
+
+    def predict_model_stream(
+        self,
+        model_id: str,
+        body: Optional[Mapping[str, Any]] = None,
+    ) -> Iterator[Any]:
+        """Predict a model in streaming mode via MLService.PredictModelStream.
+
+        :arg model_id: the deployed model id.
+        :arg body: REST-style body, e.g. ``{"parameters": {"messages": [...]}}``.
+        """
+        request = MlPredictModelStreamRequestBuilder.from_body(
+            model_id=model_id,
+            body=dict(body) if body else None,
+        ).build()
+        return self._stream(self._ml_stub.PredictModelStream, request)
+
+    def execute_agent_stream(
+        self,
+        agent_id: str,
+        body: Optional[Mapping[str, Any]] = None,
+    ) -> Iterator[Any]:
+        """Execute an agent in streaming mode via MLService.ExecuteAgentStream.
+
+        :arg agent_id: the agent id.
+        :arg body: REST-style body, e.g. ``{"parameters": {"question": "..."}}``.
+        """
+        request = MlExecuteAgentStreamRequestBuilder.from_body(
+            agent_id=agent_id,
+            body=dict(body) if body else None,
+        ).build()
+        return self._stream(self._ml_stub.ExecuteAgentStream, request)
+
+    def _stream(self, rpc: Callable[[Any], Any], request: Any) -> Iterator[Any]:
+        """Iterate a server-streaming RPC, converting each chunk to a dict.
+
+        gRPC errors surface while the stream is consumed, so the conversion
+        happens inside the generator and ``grpc.RpcError`` is mapped to the same
+        opensearch-py exceptions the REST client raises.
+        """
+        self._ensure_channel_connected()
+        try:
+            for response in rpc(request):
+                yield MlStreamResponseConverter.from_predict_response(response)
+        except grpc.RpcError as e:
+            self._raise_grpc_error(e)
+
     def _raise_grpc_error(self, error: grpc.RpcError) -> None:
         """Convert grpc.RpcError to opensearch-py exceptions.
 
@@ -431,6 +497,15 @@ class GrpcTransport(Transport):
             pem_certs.append(pem)
 
         return "".join(pem_certs).encode("ascii")
+        try:
+            self._channel.close()
+        except Exception:
+            pass
+        self._channel = grpc.insecure_channel(self._grpc_address)
+        self._document_stub = document_service_pb2_grpc.DocumentServiceStub(
+            self._channel
+        )
+        self._ml_stub = ml_service_pb2_grpc.MLServiceStub(self._channel)
 
     def close(self) -> None:
         """Close gRPC channel and REST connections."""

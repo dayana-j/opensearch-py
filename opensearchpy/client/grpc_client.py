@@ -17,19 +17,23 @@
 # -----------------------------------------------------------------------------------------+
 
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, Iterator, cast
 
 from ..exceptions import ImproperlyConfigured
 from . import OpenSearch
 
+if TYPE_CHECKING:
+    from opensearch_grpc.grpc_transport import GrpcTransport
+
 
 class OpenSearchGrpc(OpenSearch):
     """
-    OpenSearch client with gRPC transport for bulk document operations.
+    OpenSearch client with gRPC transport for bulk and ML streaming operations.
 
     Extends the standard OpenSearch client with gRPC channel management.
-    Bulk requests are routed over gRPC for better performance; all other
-    operations fall through to REST automatically.
+    Bulk requests are routed over gRPC for better performance; ML prediction
+    and agent execution can be streamed over gRPC; all other operations fall
+    through to REST automatically.
 
     Supported parameters:
         - hosts: REST endpoint(s) for fallback operations
@@ -58,6 +62,20 @@ class OpenSearchGrpc(OpenSearch):
 
         # Bulk goes over gRPC automatically
         client.bulk(body=[...])
+
+        # ML prediction stream over gRPC
+        for chunk in client.predict_model_stream(
+            model_id='my-model',
+            body={'parameters': {'messages': [{'role': 'user', 'content': 'Hi'}]}},
+        ):
+            print(chunk)
+
+        # ML agent execution stream over gRPC
+        for chunk in client.execute_agent_stream(
+            agent_id='my-agent',
+            body={'parameters': {'question': 'How many indices are in my cluster?'}},
+        ):
+            print(chunk)
 
         # Everything else uses REST
         client.search(index='my-index', body={'query': {'match_all': {}}})
@@ -108,3 +126,33 @@ class OpenSearchGrpc(OpenSearch):
             kwargs["grpc_hosts"] = grpc_hosts
 
         super().__init__(hosts, transport_class=GrpcTransport, **kwargs)
+
+    def predict_model_stream(
+        self,
+        *,
+        model_id: Any,
+        body: Any = None,
+    ) -> Iterator[Any]:
+        """
+        Predict a model in streaming mode over gRPC.
+
+        :arg model_id: the deployed model id.
+        :arg body: request body, e.g. ``{"parameters": {"messages": [...]}}``.
+        """
+        transport = cast("GrpcTransport", self.transport)
+        return transport.predict_model_stream(model_id=model_id, body=body)
+
+    def execute_agent_stream(
+        self,
+        *,
+        agent_id: Any,
+        body: Any = None,
+    ) -> Iterator[Any]:
+        """
+        Execute an agent in streaming mode over gRPC.
+
+        :arg agent_id: the agent id.
+        :arg body: request body, e.g. ``{"parameters": {"question": "..."}}``.
+        """
+        transport = cast("GrpcTransport", self.transport)
+        return transport.execute_agent_stream(agent_id=agent_id, body=body)
