@@ -108,3 +108,46 @@ class OpenSearchGrpc(OpenSearch):
             kwargs["grpc_hosts"] = grpc_hosts
 
         super().__init__(hosts, transport_class=GrpcTransport, **kwargs)
+
+    def bulk(
+        self,
+        body: Any,
+        index: Any = None,
+        params: Any = None,
+        headers: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Optimized bulk that bypasses NDJSON serialization for gRPC.
+
+        The standard client serializes body to NDJSON via _bulk_body(),
+        which the gRPC translation layer then parses back to dicts.
+        This override passes raw dicts directly to perform_request(),
+        eliminating two unnecessary serialization passes:
+
+        Standard: dicts → NDJSON → parse back → JSON for protobuf (3x serialize)
+        Optimized: dicts → JSON for protobuf (1x serialize)
+        """
+        from .utils import SKIP_IN_PATH, _make_path
+
+        if body in SKIP_IN_PATH:
+            raise ValueError("Empty value passed for a required argument 'body'.")
+
+        # Pass query params from kwargs
+        if params is None:
+            params = {}
+        for key in ("refresh", "timeout", "pipeline", "routing", "require_alias",
+                    "_source", "_source_excludes", "_source_includes",
+                    "wait_for_active_shards"):
+            if key in kwargs:
+                params[key] = kwargs.pop(key)
+
+        # Skip _bulk_body() — pass raw body directly to transport.
+        # BulkRequestProtoBuilder.from_body() handles both list-of-dicts
+        # and NDJSON strings natively.
+        return self.transport.perform_request(
+            "POST",
+            _make_path(index, "_bulk"),
+            params=params,
+            headers=headers,
+            body=body,
+        )
