@@ -467,6 +467,35 @@ class GrpcTransport(Transport):
 
         return "".join(pem_certs).encode("ascii")
 
+    def _ensure_channel_connected(self) -> None:
+        """Check channel state and reconnect if in SHUTDOWN state.
+
+        gRPC channels handle TRANSIENT_FAILURE internally with backoff,
+        but SHUTDOWN is terminal — the channel must be recreated.
+        """
+        try:
+            state = self._channel.get_state(try_to_connect=False)
+            if state == grpc.ChannelConnectivity.SHUTDOWN:
+                self._reconnect_channel()
+        except AttributeError:
+            # get_state not available in all grpc versions — skip check
+            pass
+
+    def _reconnect_channel(self) -> None:
+        """Recreate the gRPC channel and document stub.
+
+        Called when the channel enters an unrecoverable state or after
+        a connection failure during retry.
+        """
+        try:
+            self._channel.close()
+        except Exception:
+            pass
+        self._channel = grpc.insecure_channel(self._grpc_address)
+        self._document_stub = document_service_pb2_grpc.DocumentServiceStub(
+            self._channel
+        )
+
     def close(self) -> None:
         """Close gRPC channel and REST connections."""
         if self._channel:
