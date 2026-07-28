@@ -135,9 +135,17 @@ class OpenSearchGrpc(OpenSearch):
         # Pass query params from kwargs
         if params is None:
             params = {}
-        for key in ("refresh", "timeout", "pipeline", "routing", "require_alias",
-                    "_source", "_source_excludes", "_source_includes",
-                    "wait_for_active_shards"):
+        for key in (
+            "refresh",
+            "timeout",
+            "pipeline",
+            "routing",
+            "require_alias",
+            "_source",
+            "_source_excludes",
+            "_source_includes",
+            "wait_for_active_shards",
+        ):
             if key in kwargs:
                 params[key] = kwargs.pop(key)
 
