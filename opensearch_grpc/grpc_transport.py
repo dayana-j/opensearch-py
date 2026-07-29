@@ -464,6 +464,15 @@ class GrpcTransport(Transport):
 
         # If query is unsupported, fall back to REST
         if not builder.is_supported:
+            import warnings
+
+            query_type = builder.unsupported_query_type or "unknown"
+            warnings.warn(
+                f"gRPC search does not yet support the '{query_type}' query type. "
+                f"This request will be sent via REST. "
+                f"Supported query types: match_all, match_none.",
+                stacklevel=2,
+            )
             return None
 
         request = builder.build()

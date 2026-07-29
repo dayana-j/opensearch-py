@@ -47,6 +47,7 @@ class SearchRequestProtoBuilder:
     def __init__(self) -> None:
         self._request = common_pb2.SearchRequest()
         self._unsupported_query = False
+        self._unsupported_query_type: Optional[str] = None
 
     @classmethod
     def from_rest(
@@ -93,6 +94,11 @@ class SearchRequestProtoBuilder:
     def is_supported(self) -> bool:
         """Whether this search can be handled via gRPC."""
         return not self._unsupported_query
+
+    @property
+    def unsupported_query_type(self) -> Optional[str]:
+        """The query type that is not supported, or None."""
+        return self._unsupported_query_type
 
     def _apply_params(self, params: Mapping[str, Any]) -> None:
         """Map REST URL query params to SearchRequest proto fields."""
@@ -241,6 +247,7 @@ class SearchRequestProtoBuilder:
         builder_fn = _QUERY_BUILDERS.get(query_type)
         if builder_fn is None:
             # Unsupported query type — signal REST fallback
+            self._unsupported_query_type = query_type
             return None
 
         qc = common_pb2.QueryContainer()
