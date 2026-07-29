@@ -83,12 +83,17 @@ import grpc
 from opensearch.protobufs.services import (
     document_service_pb2_grpc,
     ml_service_pb2_grpc,
+    search_service_pb2_grpc,
 )
 
 from opensearch_grpc.ml_translation import (
     MlExecuteAgentStreamRequestBuilder,
     MlPredictModelStreamRequestBuilder,
     MlStreamResponseConverter,
+)
+from opensearch_grpc.search_translation import (
+    SearchRequestProtoBuilder,
+    SearchResponseConverter,
 )
 from opensearch_grpc.translation import BulkRequestProtoBuilder, ResponseConverter
 from opensearchpy.exceptions import (
@@ -327,6 +332,9 @@ class GrpcTransport(Transport):
             self._channel
         )
         self._ml_stub = ml_service_pb2_grpc.MLServiceStub(self._channel)
+        self._search_stub = search_service_pb2_grpc.SearchServiceStub(
+            self._channel
+        )
 
     def perform_request(
         self,
@@ -344,7 +352,11 @@ class GrpcTransport(Transport):
             # Retry loop for gRPC — mirrors Transport.perform_request behavior
             for attempt in range(self.max_retries + 1):
                 try:
-                    return handler(method, url, params, body)
+                    result = handler(method, url, params, body)
+                    # None means unsupported (e.g. query type) — fall to REST
+                    if result is not None:
+                        return result
+                    break
                 except ConnectionTimeout:
                     if self.retry_on_timeout and attempt < self.max_retries:
                         continue
@@ -378,19 +390,25 @@ class GrpcTransport(Transport):
 
     # Matches: /_bulk or /<index>/_bulk
     _BULK_PATTERN = re.compile(r"^/([^/]+/)?_bulk$")
+    # Matches: /_search or /<index>/_search
+    _SEARCH_PATTERN = re.compile(r"^/([^/]+/)?_search$")
 
     def _get_grpc_handler(self, method: str, url: str) -> Optional[Callable[..., Any]]:
         """Determine if this request can be handled via gRPC.
 
-        Only bulk requests are routed over gRPC.
+        Bulk and search requests are routed over gRPC.
         All other operations fall through to REST.
 
         Matches endpoints:
             POST /_bulk
             POST /<index>/_bulk
+            GET|POST /_search
+            GET|POST /<index>/_search
         """
         if method in ("POST", "PUT") and self._BULK_PATTERN.match(url):
             return self._handle_bulk
+        if method in ("GET", "POST") and self._SEARCH_PATTERN.match(url):
+            return self._handle_search
 
         return None
 
@@ -421,6 +439,43 @@ class GrpcTransport(Transport):
             self._raise_grpc_error(e)
 
         return ResponseConverter._convert_bulk_items(response)
+
+    def _handle_search(
+        self,
+        method: str,
+        url: str,
+        params: Optional[Mapping[str, Any]],
+        body: Any,
+    ) -> Any:
+        """Handle search requests via SearchService.Search gRPC.
+
+        Builds a SearchRequest protobuf from the REST-style parameters and body.
+        If the query type is unsupported, returns None to trigger REST fallback.
+        """
+        # Extract index from URL: /<index>/_search → index
+        index = self._extract_index_from_url(url, "_search")
+
+        # Build the proto request
+        builder = SearchRequestProtoBuilder.from_rest(
+            index=index,
+            body=body,
+            params=params,
+        )
+
+        # If query is unsupported, fall back to REST
+        if not builder.is_supported:
+            return None
+
+        request = builder.build()
+        if request is None:
+            return None
+
+        try:
+            response = self._search_stub.Search(request)
+        except grpc.RpcError as e:
+            self._raise_grpc_error(e)
+
+        return SearchResponseConverter.to_dict(response)
 
     # ─── ML gRPC Streaming ──────────────────────────────────
 
@@ -562,6 +617,9 @@ class GrpcTransport(Transport):
             self._channel
         )
         self._ml_stub = ml_service_pb2_grpc.MLServiceStub(self._channel)
+        self._search_stub = search_service_pb2_grpc.SearchServiceStub(
+            self._channel
+        )
 
     def close(self) -> None:
         """Close gRPC channel and REST connections."""
