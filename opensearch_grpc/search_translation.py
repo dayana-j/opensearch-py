@@ -159,9 +159,9 @@ class SearchRequestProtoBuilder:
         if "size" in body:
             srb.size = int(body["size"])
 
-        # from
+        # from (Python reserved word — use setattr)
         if "from" in body:
-            srb.from_ = int(body["from"])  # type: ignore[attr-defined]
+            setattr(srb, "from", int(body["from"]))
 
         # timeout
         if "timeout" in body:
