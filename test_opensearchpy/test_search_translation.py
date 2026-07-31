@@ -8,6 +8,7 @@
 # GitHub history for details.
 
 """Unit tests for opensearch_grpc/search_translation.py."""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -192,9 +193,7 @@ class TestSearchResponseConverter:
 
         # total
         total = MagicMock()
-        total.HasField = MagicMock(
-            side_effect=lambda f: f == "total_hits"
-        )
+        total.HasField = MagicMock(side_effect=lambda f: f == "total_hits")
         total_hits = MagicMock()
         total_hits.value = 1
         total_hits.relation = 1  # TOTAL_HITS_RELATION_EQ
@@ -203,9 +202,7 @@ class TestSearchResponseConverter:
 
         # max_score
         max_score = MagicMock()
-        max_score.HasField = MagicMock(
-            side_effect=lambda f: f == "float"
-        )
+        max_score.HasField = MagicMock(side_effect=lambda f: f == "float")
         max_score.float = 1.0  # noqa: E501
         hits.max_score = max_score
 
