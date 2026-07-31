@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Iterator, cast
 
 from ..exceptions import ImproperlyConfigured
 from . import OpenSearch
+from .utils import SKIP_IN_PATH, _make_path
 
 if TYPE_CHECKING:
     from opensearch_grpc.grpc_transport import GrpcTransport
@@ -126,6 +127,31 @@ class OpenSearchGrpc(OpenSearch):
             kwargs["grpc_hosts"] = grpc_hosts
 
         super().__init__(hosts, transport_class=GrpcTransport, **kwargs)
+
+    def bulk(
+        self,
+        *,
+        body: Any,
+        index: Any = None,
+        params: Any = None,
+        headers: Any = None,
+    ) -> Any:
+        """Override to bypass NDJSON serialization for gRPC path.
+
+        The base class serializes body to an NDJSON string, then the gRPC
+        transport would have to parse it back into dicts. This override
+        passes the raw list directly, eliminating redundant serialization.
+        """
+        if body in SKIP_IN_PATH:
+            raise ValueError("Empty value passed for a required argument 'body'.")
+
+        return self.transport.perform_request(
+            "POST",
+            _make_path(index, "_bulk"),
+            params=params,
+            headers=headers,
+            body=body,
+        )
 
     def predict_model_stream(
         self,
