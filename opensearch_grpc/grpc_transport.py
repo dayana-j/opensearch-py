@@ -97,7 +97,10 @@ class BasicAuthInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
         return continuation(new_details, request)
 
 
-class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[misc]
+class AWSV4GrpcInterceptor(
+    grpc.UnaryUnaryClientInterceptor,  # type: ignore[misc]
+    grpc.UnaryStreamClientInterceptor,  # type: ignore[misc]
+):
     """gRPC interceptor that signs every call with AWS SigV4.
 
     Uses the existing AWSV4Signer to sign requests. The gRPC method path
@@ -105,6 +108,8 @@ class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
     and the serialized protobuf body is included in the signature.
 
     Signed headers are attached as gRPC metadata on every call.
+    Supports unary and server-streaming calls. Client-streaming is not
+    supported for SigV4 as the request body must be known at sign time.
     """
 
     def __init__(self, credentials: Any, region: str, service: str = "es", host: str = "localhost") -> None:
@@ -113,9 +118,7 @@ class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
         self._signer = AWSV4Signer(credentials, region, service)
         self._host = host
 
-    def intercept_unary_unary(
-        self, continuation: Any, client_call_details: Any, request: Any
-    ) -> Any:
+    def _sign_and_add_metadata(self, client_call_details: Any, request: Any) -> Any:
         # gRPC method path (e.g., "/opensearch.DocumentService/Bulk")
         grpc_method = client_call_details.method
 
@@ -134,8 +137,17 @@ class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
             # gRPC metadata keys must be lowercase
             metadata.append((key.lower(), value))
 
-        new_details = client_call_details._replace(metadata=metadata)
-        return continuation(new_details, request)
+        return client_call_details._replace(metadata=metadata)
+
+    def intercept_unary_unary(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        return continuation(self._sign_and_add_metadata(client_call_details, request), request)
+
+    def intercept_unary_stream(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        return continuation(self._sign_and_add_metadata(client_call_details, request), request)
 
 
 class GrpcTransport(Transport):
