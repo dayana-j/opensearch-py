@@ -212,20 +212,29 @@ class TestGrpcRetryBehavior(TestCase):
         t.close()
 
     def test_non_bulk_goes_to_rest(self) -> None:
-        """Non-bulk requests bypass gRPC and go to REST transport."""
+        """Non-bulk/non-search requests bypass gRPC and go to REST transport."""
         t = GrpcTransport(
             [{"host": "localhost", "port": 9200}],
             grpc_hosts=[{"host": "localhost", "port": 9400}],
         )
-        # _get_grpc_handler should return None for non-bulk
-        handler = t._get_grpc_handler("GET", "/test-index/_search")
-        self.assertIsNone(handler)
-
+        # _get_grpc_handler should return None for non-bulk/non-search
         handler = t._get_grpc_handler("GET", "/test-index/_count")
         self.assertIsNone(handler)
 
         handler = t._get_grpc_handler("PUT", "/test-index")
         self.assertIsNone(handler)
+
+        # Search with unsupported query type should return None (routes to REST)
+        handler = t._get_grpc_handler(
+            "GET", "/test-index/_search", body={"query": {"term": {"status": "active"}}}
+        )
+        self.assertIsNone(handler)
+
+        # Search with match_all should return a handler (routes to gRPC)
+        handler = t._get_grpc_handler(
+            "GET", "/test-index/_search", body={"query": {"match_all": {}}}
+        )
+        self.assertIsNotNone(handler)
         t.close()
 
     def test_bulk_routes_to_grpc(self) -> None:
