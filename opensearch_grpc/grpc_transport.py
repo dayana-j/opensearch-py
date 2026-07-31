@@ -347,16 +347,12 @@ class GrpcTransport(Transport):
         headers: Optional[Mapping[str, str]] = None,
     ) -> Any:
         """Route to gRPC or REST based on the URL pattern."""
-        handler = self._get_grpc_handler(method, url)
+        handler = self._get_grpc_handler(method, url, body)
         if handler:
             # Retry loop for gRPC — mirrors Transport.perform_request behavior
             for attempt in range(self.max_retries + 1):
                 try:
-                    result = handler(method, url, params, body)
-                    # None means unsupported (e.g. query type) — fall to REST
-                    if result is not None:
-                        return result
-                    break
+                    return handler(method, url, params, body)
                 except ConnectionTimeout:
                     if self.retry_on_timeout and attempt < self.max_retries:
                         continue
@@ -393,24 +389,49 @@ class GrpcTransport(Transport):
     # Matches: /_search or /<index>/_search
     _SEARCH_PATTERN = re.compile(r"^/([^/]+/)?_search$")
 
-    def _get_grpc_handler(self, method: str, url: str) -> Optional[Callable[..., Any]]:
+    def _get_grpc_handler(self, method: str, url: str, body: Any = None) -> Optional[Callable[..., Any]]:
         """Determine if this request can be handled via gRPC.
 
-        Bulk and search requests are routed over gRPC.
+        Checks both the endpoint URL and the request content.
+        Bulk requests are always supported. Search requests are only
+        routed to gRPC if the query type is supported (match_all, match_none).
         All other operations fall through to REST.
 
         Matches endpoints:
             POST /_bulk
             POST /<index>/_bulk
-            GET|POST /_search
-            GET|POST /<index>/_search
+            GET|POST /_search (only for supported query types)
+            GET|POST /<index>/_search (only for supported query types)
         """
         if method in ("POST", "PUT") and self._BULK_PATTERN.match(url):
             return self._handle_bulk
         if method in ("GET", "POST") and self._SEARCH_PATTERN.match(url):
-            return self._handle_search
+            if self._is_search_query_supported(body):
+                return self._handle_search
 
         return None
+
+    # Supported query types for gRPC search
+    _SUPPORTED_SEARCH_QUERIES = {"match_all", "match_none"}
+
+    def _is_search_query_supported(self, body: Any) -> bool:
+        """Check if the search query type is supported by gRPC.
+
+        Returns True for match_all, match_none, or no query (implicit match_all).
+        Returns False for all other query types (term, match, bool, etc.).
+        """
+        if not body:
+            return True  # No body = match_all by default
+        if not isinstance(body, dict):
+            return True  # Let the handler deal with it
+        query = body.get("query")
+        if not query:
+            return True  # No query = match_all by default
+        if not isinstance(query, dict):
+            return True  # Let the handler deal with it
+        # Check if the query type is in our supported set
+        query_types = set(query.keys())
+        return query_types.issubset(self._SUPPORTED_SEARCH_QUERIES)
 
     # ─── gRPC Handlers ────────────────────────────────────────────────────────
 
@@ -450,7 +471,7 @@ class GrpcTransport(Transport):
         """Handle search requests via SearchService.Search gRPC.
 
         Builds a SearchRequest protobuf from the REST-style parameters and body.
-        If the query type is unsupported, returns None to trigger REST fallback.
+        Only called for supported query types (match_all, match_none).
         """
         # Extract index from URL: /<index>/_search → index
         index = self._extract_index_from_url(url, "_search")
@@ -461,19 +482,6 @@ class GrpcTransport(Transport):
             body=body,
             params=params,
         )
-
-        # If query is unsupported, fall back to REST
-        if not builder.is_supported:
-            import warnings
-
-            query_type = builder.unsupported_query_type or "unknown"
-            warnings.warn(
-                f"gRPC search does not yet support the '{query_type}' query type. "
-                f"This request will be sent via REST. "
-                f"Supported query types: match_all, match_none.",
-                stacklevel=2,
-            )
-            return None
 
         request = builder.build()
         if request is None:
