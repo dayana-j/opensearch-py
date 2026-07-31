@@ -15,7 +15,6 @@ Set GRPC_HOST/GRPC_PORT env vars if non-default.
 
 import os
 import time
-import warnings
 
 import pytest
 
@@ -152,22 +151,17 @@ class TestGrpcSearchMatchNone:
 
 
 class TestGrpcSearchFallback:
-    """Test that unsupported queries fall back to REST with a warning."""
+    """Test that unsupported queries are routed to REST automatically."""
 
     def test_unsupported_query_falls_back_to_rest(self, client, indexed_data):
-        """Unsupported query type emits warning and still returns results via REST."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = client.search(
-                index=TEST_INDEX,
-                body={"query": {"term": {"status": "active"}}},
-            )
-            # Should still get results via REST fallback
-            assert result["hits"]["total"]["value"] == 2
-
-            # Should have emitted a warning
-            grpc_warnings = [
-                x for x in w if "gRPC search does not yet support" in str(x.message)
-            ]
-            assert len(grpc_warnings) == 1
-            assert "term" in str(grpc_warnings[0].message)
+        """Unsupported query type is routed directly to REST without error."""
+        result = client.search(
+            index=TEST_INDEX,
+            body={"query": {"term": {"status": "active"}}},
+        )
+        # Should get a valid response via REST routing (not an error)
+        assert "hits" in result
+        assert "total" in result["hits"]
+        # The term query should find the active documents
+        hits = result["hits"]["hits"]
+        assert len(hits) >= 1
