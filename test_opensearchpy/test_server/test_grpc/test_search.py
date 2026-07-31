@@ -20,7 +20,6 @@ import pytest
 
 from opensearchpy import OpenSearchGrpc
 
-
 GRPC_HOST = os.environ.get("GRPC_HOST", "localhost")
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "9400"))
 REST_HOST = os.environ.get("REST_HOST", GRPC_HOST)

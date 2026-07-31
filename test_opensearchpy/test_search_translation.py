@@ -8,15 +8,14 @@
 # GitHub history for details.
 
 """Unit tests for opensearch_grpc/search_translation.py."""
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from opensearch_grpc.search_translation import (
+    _QUERY_BUILDERS,
     SearchRequestProtoBuilder,
     SearchResponseConverter,
-    _QUERY_BUILDERS,
 )
 
 
