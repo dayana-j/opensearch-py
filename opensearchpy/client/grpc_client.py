@@ -135,6 +135,7 @@ class OpenSearchGrpc(OpenSearch):
         index: Any = None,
         params: Any = None,
         headers: Any = None,
+        **kwargs: Any,
     ) -> Any:
         """Override to bypass NDJSON serialization for gRPC path.
 
@@ -144,6 +145,10 @@ class OpenSearchGrpc(OpenSearch):
         """
         if body in SKIP_IN_PATH:
             raise ValueError("Empty value passed for a required argument 'body'.")
+
+        if params is None:
+            params = {}
+        params.update(kwargs)
 
         return self.transport.perform_request(
             "POST",
