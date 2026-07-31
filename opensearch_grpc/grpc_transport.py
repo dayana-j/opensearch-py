@@ -105,8 +105,13 @@ from opensearchpy.exceptions import (
 from opensearchpy.transport import Transport
 
 
-class BasicAuthInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[misc]
-    """gRPC interceptor that adds Basic auth to every unary call.
+class BasicAuthInterceptor(
+    grpc.UnaryUnaryClientInterceptor,  # type: ignore[misc]
+    grpc.UnaryStreamClientInterceptor,  # type: ignore[misc]
+    grpc.StreamUnaryClientInterceptor,  # type: ignore[misc]
+    grpc.StreamStreamClientInterceptor,  # type: ignore[misc]
+):
+    """gRPC interceptor that adds Basic auth to every call (unary and streaming).
 
     Attaches an 'authorization' metadata header with base64-encoded
     credentials, matching how the REST client sends Basic auth.
@@ -116,17 +121,39 @@ class BasicAuthInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
         credentials = f"{username}:{password}".encode("utf-8")
         self._auth_header = f"Basic {base64.b64encode(credentials).decode('utf-8')}"
 
+    def _add_auth_metadata(self, client_call_details: Any) -> Any:
+        metadata = list(client_call_details.metadata or [])
+        metadata.append(("authorization", self._auth_header))
+        return client_call_details._replace(metadata=metadata)
+
     def intercept_unary_unary(
         self, continuation: Any, client_call_details: Any, request: Any
     ) -> Any:
-        metadata = list(client_call_details.metadata or [])
-        metadata.append(("authorization", self._auth_header))
-        new_details = client_call_details._replace(metadata=metadata)
-        return continuation(new_details, request)
+        return continuation(self._add_auth_metadata(client_call_details), request)
+
+    def intercept_unary_stream(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        return continuation(self._add_auth_metadata(client_call_details), request)
+
+    def intercept_stream_unary(
+        self, continuation: Any, client_call_details: Any, request_iterator: Any
+    ) -> Any:
+        return continuation(self._add_auth_metadata(client_call_details), request_iterator)
+
+    def intercept_stream_stream(
+        self, continuation: Any, client_call_details: Any, request_iterator: Any
+    ) -> Any:
+        return continuation(self._add_auth_metadata(client_call_details), request_iterator)
 
 
-class BearerTokenInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[misc]
-    """gRPC interceptor that adds Bearer token auth to every unary call."""
+class BearerTokenInterceptor(
+    grpc.UnaryUnaryClientInterceptor,  # type: ignore[misc]
+    grpc.UnaryStreamClientInterceptor,  # type: ignore[misc]
+    grpc.StreamUnaryClientInterceptor,  # type: ignore[misc]
+    grpc.StreamStreamClientInterceptor,  # type: ignore[misc]
+):
+    """gRPC interceptor that adds Bearer token auth to every call (unary and streaming)."""
 
     def __init__(self, token: str) -> None:
         if token.lower().startswith("bearer "):
@@ -134,17 +161,41 @@ class BearerTokenInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[
         else:
             self._auth_header = f"Bearer {token}"
 
+    def _add_auth_metadata(self, client_call_details: Any) -> Any:
+        metadata = list(client_call_details.metadata or [])
+        metadata.append(("authorization", self._auth_header))
+        return client_call_details._replace(metadata=metadata)
+
     def intercept_unary_unary(
         self, continuation: Any, client_call_details: Any, request: Any
     ) -> Any:
-        metadata = list(client_call_details.metadata or [])
-        metadata.append(("authorization", self._auth_header))
-        new_details = client_call_details._replace(metadata=metadata)
-        return continuation(new_details, request)
+        return continuation(self._add_auth_metadata(client_call_details), request)
+
+    def intercept_unary_stream(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        return continuation(self._add_auth_metadata(client_call_details), request)
+
+    def intercept_stream_unary(
+        self, continuation: Any, client_call_details: Any, request_iterator: Any
+    ) -> Any:
+        return continuation(self._add_auth_metadata(client_call_details), request_iterator)
+
+    def intercept_stream_stream(
+        self, continuation: Any, client_call_details: Any, request_iterator: Any
+    ) -> Any:
+        return continuation(self._add_auth_metadata(client_call_details), request_iterator)
 
 
-class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[misc]
-    """gRPC interceptor that signs every call with AWS SigV4."""
+class AWSV4GrpcInterceptor(
+    grpc.UnaryUnaryClientInterceptor,  # type: ignore[misc]
+    grpc.UnaryStreamClientInterceptor,  # type: ignore[misc]
+):
+    """gRPC interceptor that signs every call with AWS SigV4.
+
+    Supports unary and server-streaming calls. Client-streaming is not
+    supported for SigV4 as the request body must be known at sign time.
+    """
 
     def __init__(self, credentials: Any, region: str, service: str = "es", host: str = "localhost") -> None:
         from opensearchpy.helpers.signer import AWSV4Signer
@@ -152,9 +203,7 @@ class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
         self._signer = AWSV4Signer(credentials, region, service)
         self._host = host
 
-    def intercept_unary_unary(
-        self, continuation: Any, client_call_details: Any, request: Any
-    ) -> Any:
+    def _sign_and_add_metadata(self, client_call_details: Any, request: Any) -> Any:
         grpc_method = client_call_details.method
         url = f"https://{self._host}{grpc_method}"
         body = request.SerializeToString() if hasattr(request, "SerializeToString") else None
@@ -164,8 +213,17 @@ class AWSV4GrpcInterceptor(grpc.UnaryUnaryClientInterceptor):  # type: ignore[mi
         for key, value in signed_headers.items():
             metadata.append((key.lower(), value))
 
-        new_details = client_call_details._replace(metadata=metadata)
-        return continuation(new_details, request)
+        return client_call_details._replace(metadata=metadata)
+
+    def intercept_unary_unary(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        return continuation(self._sign_and_add_metadata(client_call_details, request), request)
+
+    def intercept_unary_stream(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        return continuation(self._sign_and_add_metadata(client_call_details, request), request)
 
 
 class GrpcTransport(Transport):
@@ -242,18 +300,13 @@ class GrpcTransport(Transport):
         #   - use_ssl=False: No encryption (insecure channel)
         if self._use_ssl:
             # gRPC Python does not support disabling certificate verification.
-            # When verify_certs=False without ca_certs, gRPC will use system CAs
-            # and fail against self-signed certificates. Users MUST provide
-            # ca_certs (or ssl_context with CA loaded) for self-signed certs.
+            # When verify_certs=False without ca_certs, gRPC does not support
+            # disabling certificate verification. Surface error immediately.
             if not self._verify_certs and not self._ca_certs and not self._ssl_context:
-                import warnings
-
-                warnings.warn(
+                raise ValueError(
                     "gRPC does not support verify_certs=False. The gRPC channel "
-                    "will still verify the server certificate using system CAs. "
-                    "For self-signed certificates, provide ca_certs or ssl_context. "
-                    "The REST fallback will respect verify_certs=False.",
-                    stacklevel=2,
+                    "requires valid certificate verification. "
+                    "For self-signed certificates, provide ca_certs or ssl_context."
                 )
 
             # Determine root CA certificates
@@ -341,6 +394,8 @@ class GrpcTransport(Transport):
         """Route to gRPC or REST based on the URL pattern."""
         handler = self._get_grpc_handler(method, url)
         if handler:
+            # Ensure channel is healthy before attempting gRPC
+            self._ensure_channel_connected()
             # Retry loop for gRPC — mirrors Transport.perform_request behavior
             for attempt in range(self.max_retries + 1):
                 try:
@@ -348,13 +403,13 @@ class GrpcTransport(Transport):
                 except ConnectionTimeout:
                     if self.retry_on_timeout and attempt < self.max_retries:
                         continue
-                    # Fallback to REST after retries exhausted
-                    break
+                    raise
                 except ConnectionError:
                     if attempt < self.max_retries:
+                        # Attempt channel reconnect before next retry
+                        self._reconnect_channel()
                         continue
-                    # Fallback to REST after retries exhausted
-                    break
+                    raise
                 except TransportError as e:
                     if (
                         hasattr(e, "status_code")
