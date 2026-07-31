@@ -2,11 +2,14 @@
 grpc_transport.py — gRPC Transport for the opensearch-py Client
 
 Routes bulk operations over gRPC for improved performance.
+ML prediction and agent execution are streamed over gRPC.
 All other operations (search, index, create, delete, update, count, etc.)
 fall back to REST automatically.
 
     - bulk → DocumentService.Bulk (native gRPC)
-    - everything else → REST fallback
+    - predict_model_stream → MLService.PredictModelStream (gRPC streaming)
+    - execute_agent_stream → MLService.ExecuteAgentStream (gRPC streaming)
+    - everything else → REST
 
 TLS/SSL Support:
     The gRPC channel supports TLS and mutual TLS (mTLS) using the same
@@ -228,9 +231,10 @@ class AWSV4GrpcInterceptor(
 
 class GrpcTransport(Transport):
     """
-    Transport that routes bulk operations over gRPC.
+    Transport that routes bulk and ML streaming operations over gRPC.
 
     Bulk requests are sent via DocumentService.Bulk for better performance.
+    ML prediction and agent execution use gRPC server-streaming.
     All other operations fall back to REST automatically.
 
     Channel Security:
@@ -252,7 +256,8 @@ class GrpcTransport(Transport):
 
     Retry Behavior:
         ConnectionError and ConnectionTimeout are retried up to max_retries
-        times, matching the REST transport behavior.
+        times, matching the REST transport behavior. After retries are
+        exhausted, the error is raised to the user (no silent REST fallback).
     """
 
     def __init__(self, hosts: Any, *args: Any, **kwargs: Any) -> None:
@@ -299,9 +304,8 @@ class GrpcTransport(Transport):
         #   - use_ssl=True + client_cert + client_key: Mutual TLS (mTLS)
         #   - use_ssl=False: No encryption (insecure channel)
         if self._use_ssl:
-            # gRPC Python does not support disabling certificate verification.
-            # When verify_certs=False without ca_certs, gRPC does not support
-            # disabling certificate verification. Surface error immediately.
+            # gRPC does not support disabling certificate verification.
+            # Surface error immediately if verify_certs=False without CA certs.
             if not self._verify_certs and not self._ca_certs and not self._ssl_context:
                 raise ValueError(
                     "gRPC does not support verify_certs=False. The gRPC channel "
