@@ -7,6 +7,8 @@
 # Modifications Copyright OpenSearch Contributors. See
 # GitHub history for details.
 
+# mypy: ignore-errors
+
 """Integration tests for gRPC search against a live OpenSearch instance.
 
 Requires OpenSearch running with gRPC enabled on port 9400.
