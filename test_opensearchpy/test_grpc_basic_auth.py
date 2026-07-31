@@ -190,3 +190,47 @@ class TestGrpcAuthExceptions(TestCase):
         with self.assertRaises(AuthenticationException):
             t._raise_grpc_error(error)
         t.close()
+
+
+class TestBasicAuthInterceptorStreaming(TestCase):
+    """Test BasicAuthInterceptor works with all call types (unary and streaming)."""
+
+    def setUp(self) -> None:
+        self.interceptor = BasicAuthInterceptor("admin", "password")
+        self.call_details = MagicMock()
+        self.call_details.metadata = []
+        self.call_details._replace = MagicMock(return_value=self.call_details)
+        self.continuation = MagicMock()
+
+    def _assert_auth_in_metadata(self) -> None:
+        metadata = self.call_details._replace.call_args[1]["metadata"]
+        auth_headers = [m for m in metadata if m[0] == "authorization"]
+        self.assertEqual(len(auth_headers), 1)
+        self.assertTrue(auth_headers[0][1].startswith("Basic "))
+
+    def test_intercept_unary_stream(self) -> None:
+        """Auth is attached on unary-stream calls (server streaming)."""
+        request = MagicMock()
+        self.interceptor.intercept_unary_stream(
+            self.continuation, self.call_details, request
+        )
+        self.continuation.assert_called_once()
+        self._assert_auth_in_metadata()
+
+    def test_intercept_stream_unary(self) -> None:
+        """Auth is attached on stream-unary calls (client streaming)."""
+        request_iterator = iter([MagicMock()])
+        self.interceptor.intercept_stream_unary(
+            self.continuation, self.call_details, request_iterator
+        )
+        self.continuation.assert_called_once()
+        self._assert_auth_in_metadata()
+
+    def test_intercept_stream_stream(self) -> None:
+        """Auth is attached on stream-stream calls (bidirectional)."""
+        request_iterator = iter([MagicMock()])
+        self.interceptor.intercept_stream_stream(
+            self.continuation, self.call_details, request_iterator
+        )
+        self.continuation.assert_called_once()
+        self._assert_auth_in_metadata()

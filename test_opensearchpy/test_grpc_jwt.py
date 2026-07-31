@@ -151,3 +151,47 @@ class TestGrpcTransportBearerDetection(TestCase):
         )
         self.assertIsNone(t._http_auth)
         t.close()
+
+
+class TestBearerTokenInterceptorStreaming(TestCase):
+    """Test BearerTokenInterceptor works with all call types (unary and streaming)."""
+
+    def setUp(self) -> None:
+        self.interceptor = BearerTokenInterceptor("my-jwt-token-123")
+        self.call_details = MagicMock()
+        self.call_details.metadata = []
+        self.call_details._replace = MagicMock(return_value=self.call_details)
+        self.continuation = MagicMock()
+
+    def _assert_bearer_in_metadata(self) -> None:
+        metadata = self.call_details._replace.call_args[1]["metadata"]
+        auth_headers = [m for m in metadata if m[0] == "authorization"]
+        self.assertEqual(len(auth_headers), 1)
+        self.assertTrue(auth_headers[0][1].startswith("Bearer "))
+
+    def test_intercept_unary_stream(self) -> None:
+        """Bearer token is attached on unary-stream calls (server streaming)."""
+        request = MagicMock()
+        self.interceptor.intercept_unary_stream(
+            self.continuation, self.call_details, request
+        )
+        self.continuation.assert_called_once()
+        self._assert_bearer_in_metadata()
+
+    def test_intercept_stream_unary(self) -> None:
+        """Bearer token is attached on stream-unary calls (client streaming)."""
+        request_iterator = iter([MagicMock()])
+        self.interceptor.intercept_stream_unary(
+            self.continuation, self.call_details, request_iterator
+        )
+        self.continuation.assert_called_once()
+        self._assert_bearer_in_metadata()
+
+    def test_intercept_stream_stream(self) -> None:
+        """Bearer token is attached on stream-stream calls (bidirectional)."""
+        request_iterator = iter([MagicMock()])
+        self.interceptor.intercept_stream_stream(
+            self.continuation, self.call_details, request_iterator
+        )
+        self.continuation.assert_called_once()
+        self._assert_bearer_in_metadata()
