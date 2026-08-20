@@ -357,87 +357,88 @@ class ResponseConverter:
 
     @staticmethod
     def _convert_bulk_items(response: Any) -> Dict[str, Any]:
-        """Convert a multi-item bulk response to opensearch-py dict format."""
+        """Convert a multi-item bulk response to opensearch-py dict format.
+
+        Optimized to minimize HasField calls and avoid dict comprehension
+        filtering. Builds items directly without None values.
+        """
         items = []
+        _op_types = ("index", "create", "update", "delete")
+        _status_fn = _grpc_to_rest_status
+
         for item in response.items:
-            for op_type in ("index", "create", "update", "delete"):
+            for op_type in _op_types:
                 if item.HasField(op_type):
                     resp_item = getattr(item, op_type)
-                    item_dict = {
+
+                    # Build dict directly — only include fields that have values
+                    item_dict: Dict[str, Any] = {
                         "_index": resp_item.x_index,
-                        "_id": resp_item.x_id if resp_item.x_id else None,
-                        "result": resp_item.result if resp_item.result else None,
-                        "_version": (
-                            resp_item.x_version
-                            if resp_item.HasField("x_version")
-                            else None
-                        ),
-                        "_seq_no": (
-                            resp_item.x_seq_no
-                            if resp_item.HasField("x_seq_no")
-                            else None
-                        ),
-                        "_primary_term": (
-                            resp_item.x_primary_term
-                            if resp_item.HasField("x_primary_term")
-                            else None
-                        ),
-                        "status": _grpc_to_rest_status(
-                            resp_item.status,
-                            resp_item.result if resp_item.result else None,
+                        "status": _status_fn(
+                            resp_item.status, resp_item.result or None
                         ),
                     }
+
+                    # Only add fields if they have non-empty values
+                    if resp_item.x_id:
+                        item_dict["_id"] = resp_item.x_id
+                    if resp_item.result:
+                        item_dict["result"] = resp_item.result
+                    if resp_item.HasField("x_version"):
+                        item_dict["_version"] = resp_item.x_version
+                    if resp_item.HasField("x_seq_no"):
+                        item_dict["_seq_no"] = resp_item.x_seq_no
+                    if resp_item.HasField("x_primary_term"):
+                        item_dict["_primary_term"] = resp_item.x_primary_term
                     if resp_item.HasField("x_shards"):
+                        shards = resp_item.x_shards
                         item_dict["_shards"] = {
-                            "total": resp_item.x_shards.total,
-                            "successful": resp_item.x_shards.successful,
-                            "failed": resp_item.x_shards.failed,
+                            "total": shards.total,
+                            "successful": shards.successful,
+                            "failed": shards.failed,
                         }
+                        if shards.failures:
+                            failures = []
+                            for f in shards.failures:
+                                failure: Dict[str, Any] = {
+                                    "shard": f.shard,
+                                    "primary": f.primary,
+                                    "reason": {
+                                        "type": f.reason.type,
+                                        "reason": (
+                                            f.reason.reason
+                                            if f.reason.HasField("reason")
+                                            else None
+                                        ),
+                                    },
+                                }
+                                if f.HasField("index"):
+                                    failure["index"] = f.index
+                                if f.HasField("node"):
+                                    failure["node"] = f.node
+                                failures.append(failure)
+                            item_dict["_shards"]["failures"] = failures
                     if resp_item.HasField("error"):
+                        err = resp_item.error
                         item_dict["error"] = {
-                            "type": resp_item.error.type,
+                            "type": err.type,
                             "reason": (
-                                resp_item.error.reason
-                                if resp_item.error.HasField("reason")
-                                else None
+                                err.reason if err.HasField("reason") else None
                             ),
                         }
-                    # forced_refresh: Whether the doc was force-refreshed
                     if resp_item.HasField("forced_refresh"):
                         item_dict["forced_refresh"] = resp_item.forced_refresh
-                    # get: Inline get with document source
                     if resp_item.HasField("get"):
-                        get_dict: Dict[str, Any] = {"found": resp_item.get.found}
-                        if resp_item.get.HasField("x_seq_no"):
-                            get_dict["_seq_no"] = resp_item.get.x_seq_no
-                        if resp_item.get.HasField("x_primary_term"):
-                            get_dict["_primary_term"] = resp_item.get.x_primary_term
-                        if resp_item.get.HasField("x_source"):
-                            get_dict["_source"] = resp_item.get.x_source.decode("utf-8")
+                        get_obj = resp_item.get
+                        get_dict: Dict[str, Any] = {"found": get_obj.found}
+                        if get_obj.HasField("x_seq_no"):
+                            get_dict["_seq_no"] = get_obj.x_seq_no
+                        if get_obj.HasField("x_primary_term"):
+                            get_dict["_primary_term"] = get_obj.x_primary_term
+                        if get_obj.HasField("x_source"):
+                            get_dict["_source"] = get_obj.x_source.decode("utf-8")
                         item_dict["get"] = get_dict
-                    # _shards.failures: Shard failure details
-                    if resp_item.HasField("x_shards") and resp_item.x_shards.failures:
-                        failures = []
-                        for f in resp_item.x_shards.failures:
-                            failure: Dict[str, Any] = {
-                                "shard": f.shard,
-                                "primary": f.primary,
-                                "reason": {
-                                    "type": f.reason.type,
-                                    "reason": (
-                                        f.reason.reason
-                                        if f.reason.HasField("reason")
-                                        else None
-                                    ),
-                                },
-                            }
-                            if f.HasField("index"):
-                                failure["index"] = f.index
-                            if f.HasField("node"):
-                                failure["node"] = f.node
-                            failures.append(failure)
-                        item_dict["_shards"]["failures"] = failures
-                    item_dict = {k: v for k, v in item_dict.items() if v is not None}
+
                     items.append({op_type: item_dict})
                     break
 
@@ -446,7 +447,6 @@ class ResponseConverter:
             "errors": response.errors,
             "items": items,
         }
-        # ingest_took: Time in ms spent processing documents through ingest pipeline
         if response.HasField("ingest_took"):
             result["ingest_took"] = response.ingest_took
         return result

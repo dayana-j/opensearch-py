@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Iterator, cast
 
 from ..exceptions import ImproperlyConfigured
 from . import OpenSearch
+from .utils import SKIP_IN_PATH, _make_path
 
 if TYPE_CHECKING:
     from opensearch_grpc.grpc_transport import GrpcTransport
@@ -35,6 +36,19 @@ class OpenSearchGrpc(OpenSearch):
     and agent execution can be streamed over gRPC; all other operations fall
     through to REST automatically.
 
+    Supported parameters:
+        - hosts: REST endpoint(s) for fallback operations
+        - grpc_hosts: gRPC endpoint (required)
+        - use_ssl, ca_certs, client_cert, client_key: TLS/mTLS
+        - ssl_context: Custom SSL context for CA certs
+        - ssl_version: Accepted (gRPC auto-negotiates)
+        - ssl_assert_hostname: Maps to grpc.ssl_target_name_override
+        - http_auth: Basic auth (tuple/string), Bearer/JWT, or SigV4 (callable)
+
+    Unsupported parameters (raise NotImplementedError):
+        - ssl_assert_fingerprint: No gRPC equivalent
+        - ssl_show_warn: No gRPC equivalent
+
     Usage::
 
         from opensearchpy import OpenSearchGrpc
@@ -42,6 +56,9 @@ class OpenSearchGrpc(OpenSearch):
         client = OpenSearchGrpc(
             hosts=[{'host': 'localhost', 'port': 9200}],
             grpc_hosts=[{'host': 'localhost', 'port': 9400}],
+            http_auth=('admin', 'password'),
+            use_ssl=True,
+            ca_certs='/path/to/root-ca.pem',
         )
 
         # Bulk goes over gRPC automatically
@@ -110,6 +127,36 @@ class OpenSearchGrpc(OpenSearch):
             kwargs["grpc_hosts"] = grpc_hosts
 
         super().__init__(hosts, transport_class=GrpcTransport, **kwargs)
+
+    def bulk(
+        self,
+        *,
+        body: Any,
+        index: Any = None,
+        params: Any = None,
+        headers: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Override to bypass NDJSON serialization for gRPC path.
+
+        The base class serializes body to an NDJSON string, then the gRPC
+        transport would have to parse it back into dicts. This override
+        passes the raw list directly, eliminating redundant serialization.
+        """
+        if body in SKIP_IN_PATH:
+            raise ValueError("Empty value passed for a required argument 'body'.")
+
+        if params is None:
+            params = {}
+        params.update(kwargs)
+
+        return self.transport.perform_request(
+            "POST",
+            _make_path(index, "_bulk"),
+            params=params,
+            headers=headers,
+            body=body,
+        )
 
     def predict_model_stream(
         self,
